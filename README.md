@@ -42,6 +42,7 @@ This project delivers a multi-tenant conversational sales assistant that ingests
    ```bash
    poetry run streamlit run frontend/streamlit_app.py --server.port 8001
    ```
+   - Upload PDFs for ingestion, drive chat conversations, inspect detected intents, and monitor leads/appointments directly from the console.
 
 ## Google OAuth Workflow
 1. `GET /oauth/google/init` to obtain an authorisation URL (requires bearer token).

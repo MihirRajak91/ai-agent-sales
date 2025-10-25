@@ -10,6 +10,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 from app import deps
+from app.logging_config import get_logger
 from app.models.appointment import (
     AppointmentRequest,
     AppointmentResponse,
@@ -25,6 +26,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.events.readonly",
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
+
+logger = get_logger("calendar")
 
 
 def _tokens_collection():
@@ -151,6 +154,10 @@ def _load_credentials(tenant: TenantClaims) -> Credentials:
                 }
             },
         )
+        logger.info(
+            "Google OAuth token refreshed",
+            extra={"org_id": token_doc["org_id"], "branch_id": token_doc["branch_id"]},
+        )
 
     return creds
 
@@ -185,6 +192,15 @@ def create_appointment(
         service.events()
         .insert(calendarId=calendar_id, body=event_body, sendUpdates="all")
         .execute()
+    )
+    logger.info(
+        "Google Calendar event created",
+        extra={
+            "org_id": tenant.org_id,
+            "branch_id": tenant.branch_id,
+            "event_id": event.get("id"),
+            "calendar_id": calendar_id,
+        },
     )
 
     _maybe_attach_lead(
@@ -234,6 +250,15 @@ def update_appointment(
         .update(calendarId=calendar_id, eventId=event_id, body=existing, sendUpdates="all")
         .execute()
     )
+    logger.info(
+        "Google Calendar event updated",
+        extra={
+            "org_id": tenant.org_id,
+            "branch_id": tenant.branch_id,
+            "event_id": event.get("id"),
+            "calendar_id": calendar_id,
+        },
+    )
 
     _maybe_attach_lead(
         tenant=tenant,
@@ -253,6 +278,15 @@ def delete_appointment(
     creds = _load_credentials(tenant)
     service = _calendar_service(creds)
     service.events().delete(calendarId=calendar_id, eventId=event_id, sendUpdates="all").execute()
+    logger.info(
+        "Google Calendar event deleted",
+        extra={
+            "org_id": tenant.org_id,
+            "branch_id": tenant.branch_id,
+            "event_id": event_id,
+            "calendar_id": calendar_id,
+        },
+    )
 
 
 def _event_to_response(event: dict, calendar_id: str) -> AppointmentResponse:
@@ -298,3 +332,7 @@ def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
         return None
     normalized = value.replace("Z", "+00:00")
     return datetime.fromisoformat(normalized)
+    logger.info(
+        "Google OAuth tokens saved",
+        extra={"org_id": tenant.org_id, "branch_id": tenant.branch_id},
+    )

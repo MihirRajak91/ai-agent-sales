@@ -37,6 +37,7 @@ packages = [{include = "app"}]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"
+mongomock = ">=4.1.2,<5.0.0"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -6,6 +6,7 @@ from typing import Optional
 
 from dateutil import parser, tz
 
+from app.logging_config import get_logger
 from app.models.appointment import AppointmentRequest, AppointmentUpdateRequest
 from app.models.auth import TenantClaims
 from app.models.intent import IntentLabel
@@ -19,6 +20,8 @@ from app.services.lead import attach_appointment, clear_appointment
 from app.settings import settings
 
 DEFAULT_APPOINTMENT_DURATION = timedelta(minutes=45)
+
+logger = get_logger("scheduling")
 
 
 @dataclass
@@ -44,7 +47,6 @@ def handle_scheduling(
         return _handle_reschedule(tenant, lead, user_message)
 
     if lead.appointment_event_id:
-        # Appointment already exists; no further action required.
         return SchedulingResult()
 
     if lead.intent != IntentLabel.BOOK_APPOINTMENT.value:
@@ -62,8 +64,8 @@ def _handle_booking(
     if not start or not end:
         return SchedulingResult(
             message=(
-                "📅 I can book that demo. Please share a specific date and time (e.g., "
-                "'next Tuesday at 3pm UTC' or 'May 6 at 10:00 AM PST')."
+                "I can book that demo. Please share a specific date and time "
+                "(e.g., 'next Tuesday at 3pm UTC' or 'May 6 at 10:00 AM PST')."
             )
         )
 
@@ -79,9 +81,19 @@ def _handle_booking(
     )
 
     event = create_appointment(tenant, request)
+    logger.info(
+        "Appointment booked",
+        extra={
+            "lead_id": lead.id,
+            "event_id": event.event_id,
+            "calendar_id": event.calendar_id,
+            "start": request.start_time.isoformat(),
+            "end": request.end_time.isoformat(),
+        },
+    )
     return SchedulingResult(
         message=(
-            f"✅ Demo scheduled for **{_format_datetime(start)}** "
+            f"Demo scheduled for **{_format_datetime(start)}** "
             f"(event: [{event.event_id}]({event.html_link or 'calendar'}))."
         ),
         lead=attach_appointment(
@@ -103,13 +115,13 @@ def _handle_reschedule(
 ) -> SchedulingResult:
     if not lead.appointment_event_id:
         return SchedulingResult(
-            message="ℹ️ I couldn't find an existing appointment to reschedule. If you'd like to book one, please provide a time."
+            message="I couldn't find an existing appointment to reschedule. If you'd like to book one, please provide a time."
         )
 
     start, end = _extract_datetimes(user_message)
     if not start or not end:
         return SchedulingResult(
-            message="ℹ️ To reschedule, please mention the new date and time."
+            message="To reschedule, please mention the new date and time."
         )
 
     request = AppointmentUpdateRequest(
@@ -124,9 +136,19 @@ def _handle_reschedule(
         event_id=lead.appointment_event_id,
         request=request,
     )
+    logger.info(
+        "Appointment rescheduled",
+        extra={
+            "lead_id": lead.id,
+            "event_id": event.event_id,
+            "calendar_id": event.calendar_id,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+        },
+    )
     return SchedulingResult(
         message=(
-            f"🔁 Appointment updated to **{_format_datetime(start)}** "
+            f"Appointment updated to **{_format_datetime(start)}** "
             f"(event: [{event.event_id}]({event.html_link or 'calendar'}))."
         ),
         lead=attach_appointment(
@@ -147,7 +169,7 @@ def _handle_cancel(
 ) -> SchedulingResult:
     if not lead.appointment_event_id:
         return SchedulingResult(
-            message="ℹ️ There isn't a scheduled appointment to cancel."
+            message="There isn't a scheduled appointment to cancel."
         )
 
     delete_appointment(
@@ -160,8 +182,16 @@ def _handle_cancel(
         lead_id=lead.id,
         status=LeadStatus.OPEN,
     )
+    logger.info(
+        "Appointment cancelled",
+        extra={
+            "lead_id": lead.id,
+            "event_id": lead.appointment_event_id,
+            "calendar_id": lead.calendar_id,
+        },
+    )
     return SchedulingResult(
-        message="❌ The appointment has been cancelled. Let me know if you want to book a new time.",
+        message="The appointment has been cancelled. Let me know if you want to book a new time.",
         lead=updated_lead,
     )
 
@@ -176,6 +206,10 @@ def _extract_datetimes(message: str) -> tuple[Optional[datetime], Optional[datet
             default=now.replace(hour=9, minute=0, second=0, microsecond=0),
         )
     except (parser.ParserError, ValueError, OverflowError):
+        logger.warning(
+            "Failed to parse datetime from message",
+            extra={"message": message},
+        )
         return None, None
 
     if parsed.tzinfo is None:

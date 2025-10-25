@@ -225,6 +225,14 @@ def _detect_user_intent(
             heuristic = _heuristic_intent(user_query)
             if heuristic:
                 intent = heuristic
+        logger.info(
+            "Intent detected",
+            extra={
+                "intent": intent.label,
+                "confidence": getattr(intent, "confidence", None),
+                "conversation_history_len": len(history),
+            },
+        )
         return intent
     except Exception:
         return IntentClassification()
