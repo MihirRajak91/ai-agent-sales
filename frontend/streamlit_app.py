@@ -19,6 +19,7 @@ def init_state() -> None:
         "conversation_id": "demo-thread",
         "chat_history": [],
         "leads": [],
+        "lead_search_result": None,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -225,12 +226,66 @@ def leads_and_appointments_tab() -> None:
     st.dataframe(table_rows, use_container_width=True)
 
 
+def lead_search_tab() -> None:
+    st.subheader("🔍 Lead Search")
+    query = st.text_area(
+        "Search Query",
+        value=st.session_state.get("lead_search_query", ""),
+        placeholder="Example: show open leads\n(You can also paste a JSON payload to bypass the LLM.)",
+        height=120,
+    )
+    summarize = st.checkbox(
+        "Include summary (requires Gemini)",
+        value=st.session_state.get("lead_search_summarize", False),
+    )
+
+    if st.button("Run Search"):
+        st.session_state["lead_search_query"] = query
+        st.session_state["lead_search_summarize"] = summarize
+
+        if not query.strip():
+            st.warning("Enter a natural-language query or JSON payload.")
+        else:
+            try:
+                params = {"q": query}
+                if summarize:
+                    params["summarize"] = "true"
+                response = api_request("GET", "/api/leads/search", params=params)
+                if response.ok:
+                    payload = response.json()
+                    st.session_state.lead_search_result = payload
+                    st.success(f"Found {payload.get('count', 0)} lead(s).")
+                else:
+                    st.error(f"Search failed: {response.status_code}")
+                    with st.expander("Response details"):
+                        st.write(response.text)
+            except Exception as exc:  # pragma: no cover - UI path
+                st.error(f"Lead search error: {exc}")
+
+    result = st.session_state.get("lead_search_result")
+    if result:
+        query_meta = result.get("query")
+        if query_meta:
+            with st.expander("Executed Filter", expanded=False):
+                st.json(query_meta)
+        friendly_text = _friendly_lead_summary(result)
+        if friendly_text:
+            st.info(friendly_text)
+        if result.get("results"):
+            st.json(result["results"])
+        else:
+            st.write("No leads matched the query yet.")
+    else:
+        st.caption("Run a search to see results here.")
+
+
 def render_tabs() -> None:
     tabs = st.tabs(
         [
             "Document Ingestion",
             "Chat Console",
             "Leads & Appointments",
+            "Lead Search",
         ]
     )
     with tabs[0]:
@@ -239,6 +294,45 @@ def render_tabs() -> None:
         chat_console_tab()
     with tabs[2]:
         leads_and_appointments_tab()
+    with tabs[3]:
+        lead_search_tab()
+
+
+def _friendly_lead_summary(result: dict | None) -> str:
+    if not result:
+        return ""
+    summary = result.get("summary")
+    if summary:
+        return summary
+
+    count = result.get("count", 0)
+    filter_doc = result.get("query", {}).get("filter", {})
+    filter_parts = [
+        f"{key}={value}"
+        for key, value in filter_doc.items()
+        if key not in {"org_id", "branch_id"}
+    ]
+    if filter_parts:
+        filter_text = ", ".join(filter_parts)
+    else:
+        filter_text = "current tenant scope"
+
+    lines = [f"{count} lead(s) matched the filters ({filter_text})."]
+    results = result.get("results") or []
+    if results:
+        preview = []
+        for lead in results[:3]:
+            parts = []
+            if "intent" in lead:
+                parts.append(lead["intent"])
+            if "status" in lead:
+                parts.append(f"status={lead['status']}")
+            if "confidence" in lead:
+                parts.append(f"confidence={lead['confidence']:.2f}")
+            preview.append(f"{lead.get('conversation_id', lead.get('_id'))}: " + ", ".join(parts))
+        lines.append("Preview: " + "; ".join(preview))
+
+    return " ".join(lines)
 
 
 def main() -> None:

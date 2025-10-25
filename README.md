@@ -8,6 +8,7 @@ This project delivers a multi-tenant conversational sales assistant that ingests
 - **Intent-aware lead capture** – LangGraph/Gemini classifier plus heuristics tag booking/purchase intent, persist leads, and track confidence/rationale.
 - **Chat-driven scheduling** – Users can book, reschedule, or cancel meetings via chat; confirmed slots create/update Google Calendar events and update leads.
 - **Operator visibility** – REST endpoints expose conversation, lead, and scheduling data for dashboards or automation.
+- **Roadmap toward NL lead search** – Planning underway for natural-language queries over the leads collection with Gemini → Mongo translation.
 
 ## Tech Stack
 - **Backend**: FastAPI, Poetry, Pydantic v2, LangChain, LangGraph
@@ -89,6 +90,7 @@ This project delivers a multi-tenant conversational sales assistant that ingests
 - **Phase 3** – Conversational RAG service ✔️
 - **Phase 4** – Lead capture & intent handling ✔️
 - **Phase 5** – Calendar automation & chat-driven scheduling ✔️
+- **Phase 5.5 (Planned)** – Natural-language lead search (see below)
 - **Phase 6** – Operator dashboard (Streamlit)
 - **Phase 7** – Observability & reliability
 - **Phase 8** – Testing, security review, deployment
@@ -103,3 +105,28 @@ This project delivers a multi-tenant conversational sales assistant that ingests
 - Use Poetry for dependency management.
 - Provide `.env.example` updates when adding new configuration knobs.
 - Run linting/tests before PRs (tooling TBD).
+
+## NL Lead Search Plan (Upcoming Work)
+1. **Schema surface**  
+   - Lead fields exposed: intent, confidence, status, timestamps, latest message, appointment metadata.  
+   - Enforce tenant filters (`org_id`, `branch_id`); redact sensitive fields.
+
+2. **LLM → Query translation**  
+   - Create `mongo_search` service with a Gemini prompt describing the leads schema and sample entries.  
+   - Return constrained JSON (`collection`, `filter`, `projection`, `limit`), validated via Pydantic before execution.
+
+3. **Execution guardrails**  
+   - Read-only operations, whitelist of allowed fields/operators, hard caps on result count & payload size.  
+   - Structured logging for intent label, translated query, results, and latency.
+
+4. **API & chat integration**  
+   - REST route `GET /api/leads/search?query=...` (JWT protected) returning raw hits + optional Gemini summary.  
+   - Optional chat intent (`query_leads`) to route relevant NL requests through the search service.
+
+5. **Streamlit UI support**  
+   - Add a “Lead Search” tab: natural-language input, show generated filter JSON, render results table + summary.
+
+6. **Testing**  
+   - Mock Gemini in pytest to emit canned filters; cover invalid output, schema mismatch, tenant isolation, pagination.
+
+

@@ -147,7 +147,14 @@ def health_check_gemini() -> tuple[bool, str]:
         return False, "Gemini client not initialised"
 
     try:
-        gemini_client.models.list(page_size=1)
-        return True, "Gemini reachable"
+        models = gemini_client.models.list()
+        iterable = models if hasattr(models, "__iter__") else getattr(models, "models", [])
+        iterator = iter(iterable)
+        try:
+            first = next(iterator)
+            description = getattr(first, "name", None) or "model available"
+        except StopIteration:
+            description = "no models returned but service reachable"
+        return True, f"Gemini reachable ({description})"
     except Exception as exc:  # pragma: no cover - diagnostics
         return False, f"Gemini unavailable: {exc}"
