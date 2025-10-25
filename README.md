@@ -1,132 +1,146 @@
-# Multi-tenant Conversational Sales Agent
+# Multi-Tenant Conversational Sales Agent
 
 ## Overview
-This project delivers a multi-tenant conversational sales assistant that ingests tenant knowledge, answers questions with retrieval-augmented generation (RAG), captures qualified leads, and books appointments in Google Calendar. It is designed for agencies, multi-branch organisations, and internal teams that need strict data isolation while sharing the same backend.
+This project provides a full-stack, multi-tenant sales assistant that can ingest tenant knowledge, answer questions with retrieval-augmented generation (RAG), capture and manage leads, and book appointments on shared Google Calendars. Everything is scoped by JWT claims (`org_id`, `branch_id`, `user_id`) so multiple organisations and branches can safely share the same deployment.
 
-## Key Features
-- **Tenant-isolated RAG chat** – Gemini + Pinecone retrieval scoped by JWT claims (`org_id`, `branch_id`, `user_id`).
-- **Intent-aware lead capture** – LangGraph/Gemini classifier plus heuristics tag booking/purchase intent, persist leads, and track confidence/rationale.
-- **Chat-driven scheduling** – Users can book, reschedule, or cancel meetings via chat; confirmed slots create/update Google Calendar events and update leads.
-- **Operator visibility** – REST endpoints expose conversation, lead, and scheduling data for dashboards or automation.
-- **Roadmap toward NL lead search** – Planning underway for natural-language queries over the leads collection with Gemini → Mongo translation.
+Key components now include:
+- Tenant-aware RAG chat powered by Gemini + Pinecone.
+- Intent detection and lead persistence with booking/purchase tracking.
+- Calendar automation for booking, rescheduling, and cancelling meetings.
+- A Streamlit “Operator Console” for document ingestion, live chats, lead management, and natural-language lead search.
+- Observability via structured logs and pytest coverage for critical flows.
 
-## Tech Stack
-- **Backend**: FastAPI, Poetry, Pydantic v2, LangChain, LangGraph
-- **AI Services**: Gemini 2.5 Flash (chat), text-embedding-004 (retrieval)
-- **Vector Store**: Pinecone
-- **Database**: MongoDB
-- **Scheduling**: Google Calendar OAuth (offline tokens per tenant)
-- **Frontend (optional)**: Streamlit apps under `frontend/`
+## Feature Highlights
+- **Tenant-Isolated RAG Chat**  
+  Gemini 2.5 Flash answers user questions using Pinecone retrieval with tenant filters. Chosen embeddings: `text-embedding-004`.
+
+- **Intent-Aware Lead Capture**  
+  LangGraph + Gemini classify each message (`book_appointment`, `purchase`, `none`). Leads are stored in MongoDB with confidence, rationale, appointment metadata, and timestamps.
+
+- **Calendar Automation**  
+  Chat flows create, update, and delete Google Calendar events (OAuth-based). Appointments sync back to leads to keep status in lockstep.
+
+- **Natural-Language Lead Search (New)**  
+  `GET /api/leads/search` translates plain English or JSON filters into safe MongoDB queries. Gemini produces both the filter and a narrative summary of the top results, with deterministic fallbacks if the LLM is unavailable.
+
+- **Operator Streamlit Console**  
+  Upload PDFs for ingestion, monitor conversations, review leads/appointments, and run NL lead searches. When Gemini summaries are enabled, the Lead Search tab shows the LLM narrative plus the executed filter and raw hits.
+
+- **Reliability & Observability**  
+  Structured logging (including Gemini health checks, query metadata, and summary sources), pytest coverage with mocked Pinecone/Gemini/Google services, and guardrails on tenant filters, allowed fields, and result limits.
+
+## Architecture & Tech Stack
+- **Backend**: FastAPI, Poetry, Pydantic v2, LangChain, LangGraph.
+- **AI Services**: Gemini (`gemini-2.5-flash` for chat/analysis, `text-embedding-004` for embeddings).
+- **Vector Store**: Pinecone.
+- **Database**: MongoDB.
+- **Calendar Integration**: Google Calendar OAuth (per-tenant offline tokens).
+- **Frontend**: Streamlit app under `frontend/`.
 
 ## Prerequisites
 - Python 3.10+
 - MongoDB instance (local or hosted)
 - Pinecone index (`dimension=768`, `metric=cosine`)
 - Gemini API key with access to chat + embedding models
-- Google Cloud OAuth 2.0 client (web application) with redirect `http://localhost:8000/oauth/google/callback`
-- (Optional) SMTP or SendGrid credentials if you intend to send emails
+- Google OAuth 2.0 Web Client with redirect `http://localhost:8000/oauth/google/callback`
+- (Optional) SMTP or SendGrid credentials if you plan to send follow-up emails
 
-## Quick Start
-1. **Clone & install**
+## Installation & Setup
+1. **Clone and install dependencies**
    ```bash
    git clone <repo-url>
    cd <repo>
    poetry install
    ```
-2. **Configure environment**
-   - Copy `.env.example` to `.env` and populate secrets (JWT, Gemini, Pinecone, MongoDB, Google OAuth, etc.).
-3. **Run the API**
+
+2. **Configure environment variables**
+   - Copy `.env.example` to `.env`.
+   - Populate secrets for JWT, MongoDB, Pinecone, Gemini, Google OAuth, SMTP, etc.
+   - The settings module (`app/settings.py`) lists every required knob.
+
+3. **Run the FastAPI backend**
    ```bash
    poetry run uvicorn app.main:app --reload --port 8000
    ```
-4. **(Optional) Streamlit UI**
+
+4. **Launch the Streamlit operator console (optional)**
    ```bash
    poetry run streamlit run frontend/streamlit_app.py --server.port 8001
    ```
-   - Upload PDFs for ingestion, drive chat conversations, inspect detected intents, and monitor leads/appointments directly from the console.
+   - Sidebar: configure API base URL, bearer token (e.g. from `/auth/token/dev`), and conversation ID.
+   - Tabs cover document ingestion, chat console, leads & appointments, and lead search.
 
-## Google OAuth Workflow
-1. `GET /oauth/google/init` to obtain an authorisation URL (requires bearer token).
-2. Visit the URL, consent in Google, and allow redirect back to `/oauth/google/callback`.
-3. Verify with `GET /oauth/google/status` → `{ "connected": true }`.
-4. The tenant can now create, reschedule, or cancel events via chat or REST.
+## Core Workflows
+### Document Ingestion
+1. Upload a PDF via Streamlit or call `POST /api/ingest`.
+2. The service parses pages, chunks text with tiktoken, generates embeddings, and upserts into Pinecone with `org_id` / `branch_id` in the namespace.
 
-## API Essentials
+### Chat & Lead Capture
+1. Clients call `POST /api/chat` with user messages and JWT auth.
+2. Intent detection runs first to avoid wasting tokens on RAG when a booking or purchase flow is needed.
+3. Leads are stored/updated for every booking or purchase intent; chat responses cite relevant knowledge and prompt for missing details.
+4. Calendar events are created/updated/deleted as the conversation progresses.
+
+### Natural-Language Lead Search
+1. Call `GET /api/leads/search?q=Show open leads without a calendar event&summarize=true`.
+2. Gemini (via LangChain) generates a MongoDB filter/limit JSON. Guardrails enforce tenant filters, allowed fields/operators, and result caps.
+3. Results return with:
+   - `query` (executed filter/projection/limit)
+   - `results` (sanitised documents)
+   - `summary` (Gemini narrative or deterministic fallback)
+   - `elapsed_ms`, `count`, etc.
+4. Streamlit’s Lead Search tab mirrors this flow and surfaces both the executed filter and narrative.
+
+## API Reference Snapshot
 | Endpoint | Description |
 | --- | --- |
-| `POST /auth/token` | Issue a JWT for testing (pass org/branch/user). |
-| `GET /auth/token/dev` | Convenience token for local development. |
-| `POST /api/ingest` | Multipart PDF upload → chunk → embed → Pinecone upsert. |
-| `POST /api/chat` | Tenant-scoped conversation, lead capture, and scheduling. |
-| `GET /api/leads` | List leads for the current tenant branch. |
-| `POST /api/appointments` | Create a Google Calendar event (requires OAuth). |
-| `PATCH /api/appointments/{event_id}` | Update an existing event. |
-| `DELETE /api/appointments/{event_id}` | Cancel an event. |
-| `GET /logs/recent` | Fetch latest backend logs (JWT protected). |
+| `POST /auth/token` | Issue a JWT with specific tenant claims. |
+| `GET /auth/token/dev` | Fast dev token (honours `settings.DEV_TOKEN_*`). |
+| `POST /api/ingest` | Multipart PDF ingestion with tenant scoping. |
+| `POST /api/chat` | Tenant-aware chat, lead capture, and scheduling. |
+| `GET /api/leads` | Retrieve all leads for the tenant branch. |
+| `GET /api/leads/search` | Natural-language or JSON-lead search with optional Gemini summary. |
+| `POST /api/appointments` | Create a Google Calendar event. |
+| `PATCH /api/appointments/{event_id}` | Update an existing calendar event. |
+| `DELETE /api/appointments/{event_id}` | Cancel/remove an event. |
+| `GET /oauth/google/init` | Start OAuth flow for the current tenant. |
+| `GET /oauth/google/status` | Confirm calendar connectivity. |
 
-### Typical Chat Flow
-1. User authenticates and calls `POST /api/chat`.
-2. Intent classifier runs first:
-   - `book_appointment`: lead recorded, scheduling handler attempts to parse time.
-   - `purchase`: lead recorded, no calendar action (extend as needed).
-   - `none`: skip scheduling, run RAG.
-3. Scheduler behaviour:
-   - Vague request → assistant asks for specific date/time.
-   - Concrete slot → create/update calendar event, confirm in reply.
-   - “Cancel meeting” → delete event, free the lead.
-4. Leads can be inspected via `GET /api/leads`; each carries appointment metadata.
+## Logs & Observability
+- All structured logs are written to `logs/app.log` (see `app/logging_config.py`). Nothing is printed to stdout except uvicorn access logs.
+- Lead search logging includes the intent label, generated filter, projection, limit, result count, response time, and whether the Gemini summary or fallback was returned.
+- Warnings highlight LLM failures, missing providers, or health check issues.
 
-## Running Tests
-- Enable deterministic dependencies by setting `TESTING=1` (mocks external services via `app/deps.configure_test_dependencies`).
-- Pytest entrypoint (placeholder for future suites):
+## Testing
+- Set `TESTING=1` in the environment to route external dependencies through lightweight test doubles (`configure_test_dependencies`).
+- Run the focused suite:
   ```bash
-  poetry run pytest
+  poetry run pytest tests/test_lead_search.py
   ```
-
-## Roadmap Snapshot
-- **Phase 0** – Environment setup and secret management ✔️
-- **Phase 1** – FastAPI skeleton, JWT, logging ✔️
-- **Phase 2** – Document ingestion & embeddings ✔️
-- **Phase 3** – Conversational RAG service ✔️
-- **Phase 4** – Lead capture & intent handling ✔️
-- **Phase 5** – Calendar automation & chat-driven scheduling ✔️
-- **Phase 5.5 (Planned)** – Natural-language lead search (see below)
-- **Phase 6** – Operator dashboard (Streamlit)
-- **Phase 7** – Observability & reliability
-- **Phase 8** – Testing, security review, deployment
+  (More suites can be added under `tests/` as features grow.)
+- Tests currently cover:
+  - LLM query translation and sanitisation.
+  - Lead search execution + field redaction.
+  - Gemini summary success, structured output parsing, fallback behaviour, and metadata filtering.
+  - Streamlit helper summaries (pure functions).
 
 ## Troubleshooting
-- **OAuth callback returns scope mismatch**: ensure `.env` scopes include `calendar.events`, `calendar.events.readonly`, and `calendar.readonly` (already set in `SCOPES` constant).
-- **`email-validator` import error**: Poetry install now includes it; re-run `poetry install` if you upgrade environments.
-- **Missing Pinecone index**: Create an index with `dimension=768`, `metric=cosine`, and name matching `PINECONE_INDEX` in `.env`.
+- **`Gemini unavailable: Models.list()` error**: remove old `page_size` parameter from health checks (already fixed in `app/deps.py`).
+- **`MAX_TOKENS` summary**: indicates Gemini hit output limits; retry or adjust the prompt if frequent.
+- **OAuth scope mismatch**: ensure `.env` uses `https://www.googleapis.com/auth/calendar.events`, `calendar.events.readonly`, and `calendar.readonly`.
+- **`email-validator` import error**: run `poetry install` after updating dependency lockfiles.
+- **Missing Pinecone index**: create an index with 768 dimensions and cosine metric matching `settings.PINECONE_INDEX`.
+
+## Roadmap
+- Harden lead search with more analytics dashboards and paging.
+- Extend purchase intent flow with CRM/webhook integrations.
+- Layer additional analytics (metrics export, tracing).
+- Production hardening (CI/CD, lint/format hooks, secrets management).
 
 ## Contributing
-- Fork and branch from `main` (`feature/<name>`).
-- Use Poetry for dependency management.
-- Provide `.env.example` updates when adding new configuration knobs.
-- Run linting/tests before PRs (tooling TBD).
+1. Fork and branch from `main` (`feature/<name>`).
+2. Use Poetry to manage dependencies.
+3. Update `.env.example` and documentation when adding configuration.
+4. Run `poetry run pytest` before opening a PR.
 
-## NL Lead Search Plan (Upcoming Work)
-1. **Schema surface**  
-   - Lead fields exposed: intent, confidence, status, timestamps, latest message, appointment metadata.  
-   - Enforce tenant filters (`org_id`, `branch_id`); redact sensitive fields.
-
-2. **LLM → Query translation**  
-   - Create `mongo_search` service with a Gemini prompt describing the leads schema and sample entries.  
-   - Return constrained JSON (`collection`, `filter`, `projection`, `limit`), validated via Pydantic before execution.
-
-3. **Execution guardrails**  
-   - Read-only operations, whitelist of allowed fields/operators, hard caps on result count & payload size.  
-   - Structured logging for intent label, translated query, results, and latency.
-
-4. **API & chat integration**  
-   - REST route `GET /api/leads/search?query=...` (JWT protected) returning raw hits + optional Gemini summary.  
-   - Optional chat intent (`query_leads`) to route relevant NL requests through the search service.
-
-5. **Streamlit UI support**  
-   - Add a “Lead Search” tab: natural-language input, show generated filter JSON, render results table + summary.
-
-6. **Testing**  
-   - Mock Gemini in pytest to emit canned filters; cover invalid output, schema mismatch, tenant isolation, pagination.
-
-
+The project aims to provide a production-ready foundation for multi-tenant, AI-assisted sales operations. Contributions, bug reports, and feature ideas are always welcome.
