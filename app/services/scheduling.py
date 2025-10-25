@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Optional
+
+from dateutil import parser, tz
+
+from app.models.appointment import AppointmentRequest, AppointmentUpdateRequest
+from app.models.auth import TenantClaims
+from app.models.intent import IntentLabel
+from app.models.lead import Lead, LeadStatus
+from app.services.google_calendar import (
+    create_appointment,
+    delete_appointment,
+    update_appointment,
+)
+from app.services.lead import attach_appointment, clear_appointment
+from app.settings import settings
+
+DEFAULT_APPOINTMENT_DURATION = timedelta(minutes=45)
+
+
+@dataclass
+class SchedulingResult:
+    message: Optional[str] = None
+    lead: Optional[Lead] = None
+
+
+def handle_scheduling(
+    tenant: TenantClaims,
+    lead: Lead | None,
+    user_message: str,
+) -> SchedulingResult:
+    if lead is None:
+        return SchedulingResult()
+
+    lowered = user_message.lower()
+
+    if "cancel" in lowered:
+        return _handle_cancel(tenant, lead)
+
+    if any(keyword in lowered for keyword in ["reschedule", "resched", "update", "move"]):
+        return _handle_reschedule(tenant, lead, user_message)
+
+    if lead.appointment_event_id:
+        # Appointment already exists; no further action required.
+        return SchedulingResult()
+
+    if lead.intent != IntentLabel.BOOK_APPOINTMENT.value:
+        return SchedulingResult()
+
+    return _handle_booking(tenant, lead, user_message)
+
+
+def _handle_booking(
+    tenant: TenantClaims,
+    lead: Lead,
+    user_message: str,
+) -> SchedulingResult:
+    start, end = _extract_datetimes(user_message)
+    if not start or not end:
+        return SchedulingResult(
+            message=(
+                "📅 I can book that demo. Please share a specific date and time (e.g., "
+                "'next Tuesday at 3pm UTC' or 'May 6 at 10:00 AM PST')."
+            )
+        )
+
+    timezone_name = settings.DEFAULT_TIMEZONE
+    request = AppointmentRequest(
+        summary=f"Demo with tenant {tenant.org_id}",
+        description="Scheduled via conversational assistant.",
+        start_time=start,
+        end_time=end,
+        timezone=timezone_name,
+        attendees=[],
+        lead_id=lead.id,
+    )
+
+    event = create_appointment(tenant, request)
+    return SchedulingResult(
+        message=(
+            f"✅ Demo scheduled for **{_format_datetime(start)}** "
+            f"(event: [{event.event_id}]({event.html_link or 'calendar'}))."
+        ),
+        lead=attach_appointment(
+            tenant,
+            lead_id=lead.id,
+            event_id=event.event_id,
+            start=start,
+            end=end,
+            calendar_id=event.calendar_id,
+            status=LeadStatus.CONTACTED,
+        ),
+    )
+
+
+def _handle_reschedule(
+    tenant: TenantClaims,
+    lead: Lead,
+    user_message: str,
+) -> SchedulingResult:
+    if not lead.appointment_event_id:
+        return SchedulingResult(
+            message="ℹ️ I couldn't find an existing appointment to reschedule. If you'd like to book one, please provide a time."
+        )
+
+    start, end = _extract_datetimes(user_message)
+    if not start or not end:
+        return SchedulingResult(
+            message="ℹ️ To reschedule, please mention the new date and time."
+        )
+
+    request = AppointmentUpdateRequest(
+        start_time=start,
+        end_time=end,
+        timezone=settings.DEFAULT_TIMEZONE,
+        lead_id=lead.id,
+        calendar_id=lead.calendar_id,
+    )
+    event = update_appointment(
+        tenant,
+        event_id=lead.appointment_event_id,
+        request=request,
+    )
+    return SchedulingResult(
+        message=(
+            f"🔁 Appointment updated to **{_format_datetime(start)}** "
+            f"(event: [{event.event_id}]({event.html_link or 'calendar'}))."
+        ),
+        lead=attach_appointment(
+            tenant,
+            lead_id=lead.id,
+            event_id=event.event_id,
+            start=start,
+            end=end,
+            calendar_id=event.calendar_id,
+            status=LeadStatus.CONTACTED,
+        ),
+    )
+
+
+def _handle_cancel(
+    tenant: TenantClaims,
+    lead: Lead,
+) -> SchedulingResult:
+    if not lead.appointment_event_id:
+        return SchedulingResult(
+            message="ℹ️ There isn't a scheduled appointment to cancel."
+        )
+
+    delete_appointment(
+        tenant,
+        event_id=lead.appointment_event_id,
+        calendar_id=lead.calendar_id or "primary",
+    )
+    updated_lead = clear_appointment(
+        tenant,
+        lead_id=lead.id,
+        status=LeadStatus.OPEN,
+    )
+    return SchedulingResult(
+        message="❌ The appointment has been cancelled. Let me know if you want to book a new time.",
+        lead=updated_lead,
+    )
+
+
+def _extract_datetimes(message: str) -> tuple[Optional[datetime], Optional[datetime]]:
+    try:
+        default_tz = tz.gettz(settings.DEFAULT_TIMEZONE)
+        now = datetime.now(default_tz)
+        parsed = parser.parse(
+            message,
+            fuzzy=True,
+            default=now.replace(hour=9, minute=0, second=0, microsecond=0),
+        )
+    except (parser.ParserError, ValueError, OverflowError):
+        return None, None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=default_tz)
+
+    if parsed <= datetime.now(parsed.tzinfo):
+        parsed = parsed + timedelta(days=7)
+
+    end = parsed + DEFAULT_APPOINTMENT_DURATION
+    return parsed, end
+
+
+def _format_datetime(value: datetime) -> str:
+    local_tz = tz.gettz(settings.DEFAULT_TIMEZONE)
+    localized = value.astimezone(local_tz)
+    return localized.strftime("%A, %d %B %Y at %I:%M %p %Z")
