@@ -13,7 +13,7 @@ from app.models.appointment import (
     AppointmentResponse,
     AppointmentUpdateRequest,
 )
-from app.settings import settings
+from app.config.settings import settings
 
 
 class FakeEmbeddingResponse:

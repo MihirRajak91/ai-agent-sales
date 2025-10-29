@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.models.auth import TenantClaims
 from app.models.search import LeadSearchQuery
 from app.services import lead_search
-from app.settings import settings
+from app.config.settings import settings
 
 
 class DummyLLM:

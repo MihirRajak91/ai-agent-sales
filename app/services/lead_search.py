@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-from app.logging_config import get_logger
+from app.config.logging_config import get_logger
 from app.models.auth import TenantClaims
 from app.models.search import LeadSearchQuery
 from app import deps
@@ -19,7 +19,7 @@ from app.services.lead_search_schema import (
     LEAD_SEARCHABLE_FIELDS,
     describe_lead_schema,
 )
-from app.settings import settings
+from app.config.settings import settings
 
 logger = get_logger("lead-search")
 

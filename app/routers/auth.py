@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.models.auth import TenantClaims, TokenRequest, TokenResponse
 from app.services.auth import create_access_token
-from app.settings import settings
+from app.config.settings import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

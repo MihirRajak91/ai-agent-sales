@@ -6,7 +6,7 @@ from app import deps
 from app.models.auth import TenantClaims
 from app.models.retrieval import RetrievedChunk, RetrievalResult
 from app.services.tenancy import build_tenant_namespace
-from app.settings import settings
+from app.config.settings import settings
 from app.utils.constants import (
     DEFAULT_RETRIEVAL_TOP_K,
     GEMINI_EMPTY_EMBEDDINGS_ERROR,

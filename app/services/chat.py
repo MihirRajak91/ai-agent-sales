@@ -1,24 +1,26 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List, Tuple
+import re
+from typing import List, Optional, Tuple
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from app.logging_config import get_logger
+from app.config.logging_config import get_logger
 from app.models.auth import TenantClaims
 from app.models.chat import ChatMessage, ChatRequest, ChatResponse
 from app.models.intent import IntentClassification, IntentLabel
 from app.models.retrieval import RetrievedChunk
 from app.models.lead import Lead
 from app.services import conversation as conversation_service
+from app.services.email import EmailDeliveryError, send_email
 from app.services.intent import detect_intent
 from app.services.lead import record_lead
 from app.services.retrieval import query_knowledge_base
 from app.services.scheduling import handle_scheduling, SchedulingResult
-from app.settings import settings
+from app.config.settings import settings
 from app.utils.constants import (
     CHAT_BOOKING_HEURISTIC_RATIONALE,
     CHAT_BOOKING_KEYWORDS,
@@ -38,8 +40,17 @@ from app.utils.constants import (
     CHAT_PROMPT_INPUT_KEY,
     CHAT_PROMPT_INSTRUCTIONS,
     CHAT_PROMPT_USER_QUESTION_TEMPLATE,
+    CHAT_PURCHASE_CONFIRMATION_KEYWORDS,
     CHAT_PURCHASE_HEURISTIC_RATIONALE,
     CHAT_PURCHASE_KEYWORDS,
+    CHAT_PURCHASE_INVOICE_SYSTEM_PROMPT,
+    CHAT_PURCHASE_INVOICE_USER_TEMPLATE,
+    CHAT_PURCHASE_PAYMENT_INSTRUCTIONS,
+    CHAT_PURCHASE_EMAIL_FAILURE_MESSAGE,
+    CHAT_PURCHASE_EMAIL_MISSING_ADDRESS,
+    CHAT_PURCHASE_EMAIL_SENT_TEMPLATE,
+    CHAT_PURCHASE_EMAIL_SUBJECT,
+    CHAT_PURCHASE_SALES_TONE_INSTRUCTIONS,
     CHAT_SCHEDULING_FAILURE_MESSAGE,
     CHAT_SOURCE_TEMPLATE,
     CHAT_SYSTEM_PROMPT,
@@ -48,6 +59,17 @@ from app.utils.constants import (
 )
 
 logger = get_logger(CHAT_LOGGER_NAME)
+
+_EMAIL_REGEX = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def _build_llm() -> ChatGoogleGenerativeAI:
+    return ChatGoogleGenerativeAI(
+        model=settings.LLM_MODEL,
+        api_key=settings.GEMINI_API_KEY,
+        temperature=CHAT_MODEL_TEMPERATURE,
+        max_output_tokens=CHAT_MODEL_MAX_OUTPUT_TOKENS,
+    )
 
 
 def handle_chat(
@@ -72,6 +94,8 @@ def handle_chat(
     retrieval_matches: List[RetrievedChunk] = []
     lead_for_response: Lead | None = lead
     scheduling_result: SchedulingResult | None = None
+    is_purchase_intent = intent is not None and intent.label == IntentLabel.PURCHASE
+    purchase_confirmed = is_purchase_intent and _is_purchase_confirmation(request.query)
     if lead:
         try:
             scheduling_result = handle_scheduling(tenant, lead, request.query)
@@ -96,33 +120,44 @@ def handle_chat(
         context_text = _format_context(retrieval_matches)
 
         history_messages = _to_langchain_messages(recent_history)
-        user_message = HumanMessage(
-            content=_build_human_prompt(request.query, context_text),
-        )
+        if purchase_confirmed:
+            history_with_current = history_messages + [HumanMessage(content=request.query)]
+            invoice_text = _generate_purchase_invoice(
+                history_with_current,
+                context_text,
+                request.query,
+            )
+            email_feedback = _maybe_email_purchase_invoice(
+                tenant=tenant,
+                lead=lead_for_response or lead,
+                conversation_id=conversation_id,
+                history_messages=history_with_current,
+                invoice_text=invoice_text,
+            )
+            answer_text = f"{invoice_text}\n\n{email_feedback}" if email_feedback else invoice_text
+        else:
+            user_message = HumanMessage(
+                content=_build_human_prompt(request.query, context_text, intent),
+            )
 
-        llm = ChatGoogleGenerativeAI(
-            model=settings.LLM_MODEL,
-            api_key=settings.GEMINI_API_KEY,
-            temperature=CHAT_MODEL_TEMPERATURE,
-            max_output_tokens=CHAT_MODEL_MAX_OUTPUT_TOKENS,
-        )
+            llm = _build_llm()
 
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", CHAT_SYSTEM_PROMPT),
-                MessagesPlaceholder(variable_name=CHAT_PROMPT_HISTORY_VARIABLE),
-                ("human", CHAT_PROMPT_HUMAN_TEMPLATE),
-            ]
-        )
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    ("system", CHAT_SYSTEM_PROMPT),
+                    MessagesPlaceholder(variable_name=CHAT_PROMPT_HISTORY_VARIABLE),
+                    ("human", CHAT_PROMPT_HUMAN_TEMPLATE),
+                ]
+            )
 
-        chain = prompt | llm
-        ai_response: AIMessage = chain.invoke(
-            {
-                CHAT_PROMPT_HISTORY_VARIABLE: history_messages,
-                CHAT_PROMPT_INPUT_KEY: user_message.content,
-            }
-        )
-        answer_text = ai_response.content if isinstance(ai_response.content, str) else str(ai_response.content)
+            chain = prompt | llm
+            ai_response: AIMessage = chain.invoke(
+                {
+                    CHAT_PROMPT_HISTORY_VARIABLE: history_messages,
+                    CHAT_PROMPT_INPUT_KEY: user_message.content,
+                }
+            )
+            answer_text = ai_response.content if isinstance(ai_response.content, str) else str(ai_response.content)
 
     appended_messages = _persist_messages(
         tenant,
@@ -196,12 +231,116 @@ def _to_langchain_messages(history: List[dict]) -> List[BaseMessage]:
     return messages
 
 
-def _build_human_prompt(user_query: str, context_text: str) -> str:
+def _build_human_prompt(
+    user_query: str,
+    context_text: str,
+    intent: IntentClassification | None,
+) -> str:
+    instructions = CHAT_PROMPT_INSTRUCTIONS
+    if intent is not None and intent.label == IntentLabel.PURCHASE:
+        instructions = f"{instructions}\n{CHAT_PURCHASE_SALES_TONE_INSTRUCTIONS}"
     return (
         f"{CHAT_PROMPT_USER_QUESTION_TEMPLATE.format(question=user_query)}\n\n"
         f"{CHAT_PROMPT_CONTEXT_HEADER.format(context=context_text)}\n\n"
-        f"{CHAT_PROMPT_INSTRUCTIONS}"
+        f"{instructions}"
     )
+
+
+def _generate_purchase_invoice(
+    history_messages: List[BaseMessage],
+    context_text: str,
+    user_message: str,
+) -> str:
+    llm = _build_llm()
+    conversation_summary = _format_history_for_invoice(history_messages)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", CHAT_PURCHASE_INVOICE_SYSTEM_PROMPT),
+            MessagesPlaceholder(variable_name=CHAT_PROMPT_HISTORY_VARIABLE),
+            ("human", CHAT_PURCHASE_INVOICE_USER_TEMPLATE),
+        ]
+    )
+    chain = prompt | llm
+    ai_response: AIMessage = chain.invoke(
+        {
+            CHAT_PROMPT_HISTORY_VARIABLE: history_messages,
+            "conversation_summary": conversation_summary,
+            "context": context_text,
+            "user_message": user_message,
+            "payment_instructions": CHAT_PURCHASE_PAYMENT_INSTRUCTIONS,
+        }
+    )
+    return ai_response.content if isinstance(ai_response.content, str) else str(ai_response.content)
+
+
+def _maybe_email_purchase_invoice(
+    *,
+    tenant: TenantClaims,
+    lead: Optional[Lead],
+    conversation_id: str,
+    history_messages: List[BaseMessage],
+    invoice_text: str,
+) -> Optional[str]:
+    recipient = _extract_email_from_messages(history_messages)
+    if not recipient:
+        return CHAT_PURCHASE_EMAIL_MISSING_ADDRESS
+
+    try:
+        send_email(
+            recipients=[recipient],
+            subject=CHAT_PURCHASE_EMAIL_SUBJECT,
+            body=invoice_text,
+        )
+        logger.info(
+            "Invoice emailed",
+            extra={
+                "conversation_id": conversation_id,
+                "recipient": recipient,
+                "lead_id": getattr(lead, "id", None),
+                "org_id": tenant.org_id,
+                "branch_id": tenant.branch_id,
+            },
+        )
+        return CHAT_PURCHASE_EMAIL_SENT_TEMPLATE.format(email=recipient)
+    except EmailDeliveryError:
+        logger.warning(
+            "Failed to email invoice",
+            extra={
+                "conversation_id": conversation_id,
+                "recipient": recipient,
+                "lead_id": getattr(lead, "id", None),
+                "org_id": tenant.org_id,
+                "branch_id": tenant.branch_id,
+            },
+            exc_info=False,
+        )
+        return CHAT_PURCHASE_EMAIL_FAILURE_MESSAGE
+
+
+def _format_history_for_invoice(messages: List[BaseMessage]) -> str:
+    if not messages:
+        return "None"
+    lines: List[str] = []
+    for message in messages[-10:]:
+        if isinstance(message, HumanMessage):
+            role = "User"
+        elif isinstance(message, AIMessage):
+            role = "Assistant"
+        else:
+            role = message.__class__.__name__
+        lines.append(f"{role}: {getattr(message, 'content', '')}")
+    return "\n".join(lines)
+
+
+def _extract_email_from_messages(messages: List[BaseMessage]) -> Optional[str]:
+    for message in reversed(messages):
+        content = getattr(message, "content", "")
+        if not isinstance(content, str):
+            continue
+        matches = _EMAIL_REGEX.findall(content)
+        if matches:
+            return matches[-1].lower()
+    return None
 
 
 def _persist_messages(
@@ -264,6 +403,11 @@ def _detect_user_intent(
         return intent
     except Exception:
         return IntentClassification()
+
+
+def _is_purchase_confirmation(user_query: str) -> bool:
+    lowered = user_query.lower()
+    return any(keyword in lowered for keyword in CHAT_PURCHASE_CONFIRMATION_KEYWORDS)
 
 
 def _heuristic_intent(user_query: str) -> IntentClassification | None:

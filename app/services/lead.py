@@ -44,6 +44,7 @@ def record_lead(
             "intent": intent.label.value,
             "confidence": intent.confidence,
             "latest_message": latest_message,
+            "status": LeadStatus.OPEN.value,
             "updated_at": now,
         },
         "$setOnInsert": {
@@ -84,6 +85,23 @@ def list_leads(tenant: TenantClaims) -> List[Lead]:
         }
     ).sort("updated_at", -1)
     return [_mongo_to_lead(doc) for doc in cursor]
+
+
+def get_lead_by_conversation(
+    tenant: TenantClaims,
+    conversation_id: str,
+) -> Optional[Lead]:
+    doc = _collection().find_one(
+        {
+            "conversation_id": conversation_id,
+            "org_id": tenant.org_id,
+            "branch_id": tenant.branch_id,
+        },
+        sort=[("updated_at", -1)],
+    )
+    if doc is None:
+        return None
+    return _mongo_to_lead(doc)
 
 
 def attach_appointment(

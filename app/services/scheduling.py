@@ -6,7 +6,7 @@ from typing import Optional
 
 from dateutil import parser, tz
 
-from app.logging_config import get_logger
+from app.config.logging_config import get_logger
 from app.models.appointment import AppointmentRequest, AppointmentUpdateRequest
 from app.models.auth import TenantClaims
 from app.models.intent import IntentLabel
@@ -16,8 +16,10 @@ from app.services.google_calendar import (
     delete_appointment,
     update_appointment,
 )
+from app.services.email import EmailDeliveryError, send_email
 from app.services.lead import attach_appointment, clear_appointment
-from app.settings import settings
+from app.services.outreach import find_recipient_email
+from app.config.settings import settings
 
 DEFAULT_APPOINTMENT_DURATION = timedelta(minutes=45)
 
@@ -91,20 +93,34 @@ def _handle_booking(
             "end": request.end_time.isoformat(),
         },
     )
+    updated_lead = attach_appointment(
+        tenant,
+        lead_id=lead.id,
+        event_id=event.event_id,
+        start=start,
+        end=end,
+        calendar_id=event.calendar_id,
+        status=LeadStatus.CONTACTED,
+    )
+
+    _send_appointment_email(
+        tenant=tenant,
+        lead=updated_lead,
+        start=start,
+        end=end,
+        calendar_id=event.calendar_id,
+        event_id=event.event_id,
+        event_link=event.html_link,
+        summary=request.summary,
+        action="booked",
+    )
+
     return SchedulingResult(
         message=(
             f"Demo scheduled for **{_format_datetime(start)}** "
             f"(event: [{event.event_id}]({event.html_link or 'calendar'}))."
         ),
-        lead=attach_appointment(
-            tenant,
-            lead_id=lead.id,
-            event_id=event.event_id,
-            start=start,
-            end=end,
-            calendar_id=event.calendar_id,
-            status=LeadStatus.CONTACTED,
-        ),
+        lead=updated_lead,
     )
 
 
@@ -146,20 +162,34 @@ def _handle_reschedule(
             "end": end.isoformat(),
         },
     )
+    updated_lead = attach_appointment(
+        tenant,
+        lead_id=lead.id,
+        event_id=event.event_id,
+        start=start,
+        end=end,
+        calendar_id=event.calendar_id,
+        status=LeadStatus.CONTACTED,
+    )
+
+    _send_appointment_email(
+        tenant=tenant,
+        lead=updated_lead,
+        start=start,
+        end=end,
+        calendar_id=event.calendar_id,
+        event_id=event.event_id,
+        event_link=event.html_link,
+        summary=request.summary or "Updated appointment",
+        action="rescheduled",
+    )
+
     return SchedulingResult(
         message=(
             f"Appointment updated to **{_format_datetime(start)}** "
             f"(event: [{event.event_id}]({event.html_link or 'calendar'}))."
         ),
-        lead=attach_appointment(
-            tenant,
-            lead_id=lead.id,
-            event_id=event.event_id,
-            start=start,
-            end=end,
-            calendar_id=event.calendar_id,
-            status=LeadStatus.CONTACTED,
-        ),
+        lead=updated_lead,
     )
 
 
@@ -226,3 +256,94 @@ def _format_datetime(value: datetime) -> str:
     local_tz = tz.gettz(settings.DEFAULT_TIMEZONE)
     localized = value.astimezone(local_tz)
     return localized.strftime("%A, %d %B %Y at %I:%M %p %Z")
+
+
+def _format_duration(start: datetime, end: datetime) -> str:
+    delta = end - start
+    minutes = max(int(delta.total_seconds() // 60), 1)
+    hours, mins = divmod(minutes, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if mins:
+        parts.append(f"{mins} minute{'s' if mins != 1 else ''}")
+    return " ".join(parts) if parts else "45 minutes"
+
+
+def _send_appointment_email(
+    *,
+    tenant: TenantClaims,
+    lead: Lead,
+    start: datetime,
+    end: datetime,
+    calendar_id: Optional[str],
+    event_id: str,
+    event_link: Optional[str],
+    summary: Optional[str],
+    action: str,
+) -> None:
+    recipient = find_recipient_email(tenant, lead.conversation_id, history_limit=25)
+    if not recipient:
+        logger.info(
+            "Skipping appointment email; no recipient detected",
+            extra={
+                "conversation_id": lead.conversation_id,
+                "lead_id": lead.id,
+                "action": action,
+            },
+        )
+        return
+
+    when_text = _format_datetime(start)
+    duration_text = _format_duration(start, end)
+    summary_text = summary or "Sales appointment"
+    action_phrase = "scheduled" if action == "booked" else "updated"
+    subject = f"Your appointment is {action_phrase} for {when_text}"
+
+    lines = [
+        "Hi there,",
+        "",
+        f"We've {action_phrase} your appointment so everything is locked in.",
+        "",
+        f"• Summary: {summary_text}",
+        f"• When: {when_text}",
+        f"• Duration: {duration_text}",
+        f"• Calendar: {calendar_id or 'primary'}",
+    ]
+    if event_link:
+        lines.append(f"• Event link: {event_link}")
+    else:
+        lines.append("• Event link: This event is available in your Google Calendar.")
+
+    lines.extend(
+        [
+            "",
+            "If you need to make any changes or have questions, just reply to this email.",
+            "",
+            "Thanks,\nSales Team",
+        ]
+    )
+    body = "\n".join(lines)
+
+    try:
+        send_email(recipients=[recipient], subject=subject, body=body)
+        logger.info(
+            "Appointment email sent",
+            extra={
+                "conversation_id": lead.conversation_id,
+                "lead_id": lead.id,
+                "recipient": recipient,
+                "action": action,
+            },
+        )
+    except EmailDeliveryError as exc:
+        logger.warning(
+            "Failed to send appointment email",
+            extra={
+                "conversation_id": lead.conversation_id,
+                "lead_id": lead.id,
+                "recipient": recipient,
+                "action": action,
+            },
+            exc_info=exc,
+        )

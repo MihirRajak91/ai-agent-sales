@@ -10,7 +10,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 from app import deps
-from app.logging_config import get_logger
+from app.config.logging_config import get_logger
 from app.models.appointment import (
     AppointmentRequest,
     AppointmentResponse,
@@ -19,7 +19,7 @@ from app.models.appointment import (
 from app.models.auth import TenantClaims
 from app.models.lead import LeadStatus
 from app.services.lead import attach_appointment
-from app.settings import settings
+from app.config.settings import settings
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",

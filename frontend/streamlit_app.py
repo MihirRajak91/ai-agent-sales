@@ -26,8 +26,15 @@ def init_state() -> None:
         "leads": [],
         "lead_search_result": None,
         "oauth_authorize_url": "",
-        "oauth_state": "",
-        "oauth_connected": None,
+       "oauth_state": "",
+       "oauth_connected": None,
+        "outreach_leads": [],
+        "outreach_selected_conversation": "",
+        "outreach_messages": [],
+        "outreach_history_limit": 8,
+        "outreach_subject": "",
+        "outreach_body": "",
+        "outreach_recipient": "",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -409,6 +416,151 @@ def leads_and_appointments_tab() -> None:
     st.dataframe(table_rows, use_container_width=True)
 
 
+def lead_outreach_tab() -> None:
+    st.subheader("✉️ Lead Outreach")
+    if not auth_headers():
+        st.info("Provide a bearer token in the sidebar to load leads.")
+        return
+
+    if st.button("Refresh Open Leads"):
+        try:
+            response = api_request("GET", "/api/outreach/open-leads")
+            if response.ok:
+                st.session_state.outreach_leads = response.json()
+                st.success("Open leads refreshed.")
+            else:
+                st.error(f"Failed to fetch open leads: {response.status_code}")
+                with st.expander("Response details"):
+                    st.write(response.text)
+        except Exception as exc:  # pragma: no cover - UI path
+            st.error(f"Error fetching open leads: {exc}")
+
+    leads = [
+        lead for lead in st.session_state.get("outreach_leads", []) if lead.get("conversation_id")
+    ]
+    if not leads:
+        st.info("No open leads available yet. Capture a lead in the chat to see it here.")
+        return
+
+    def _lead_label(lead: dict) -> str:
+        preview = (lead.get("latest_message") or "").replace("\n", " ").strip()
+        if len(preview) > 60:
+            preview = preview[:57] + "..."
+        return f"{lead.get('conversation_id')} · {lead.get('intent', 'unknown')} · {preview or 'No message'}"
+
+    labels = [_lead_label(lead) for lead in leads]
+    conversation_ids = [lead["conversation_id"] for lead in leads]
+
+    default_index = 0
+    if st.session_state.outreach_selected_conversation in conversation_ids:
+        default_index = conversation_ids.index(st.session_state.outreach_selected_conversation)
+
+    selected_index = st.selectbox(
+        "Select an open lead",
+        options=range(len(leads)),
+        index=default_index,
+        format_func=lambda idx: labels[idx],
+    )
+    selected_lead = leads[selected_index]
+    selected_conversation = selected_lead["conversation_id"]
+
+    if selected_conversation != st.session_state.outreach_selected_conversation:
+        st.session_state.outreach_selected_conversation = selected_conversation
+        st.session_state.outreach_subject = ""
+        st.session_state.outreach_body = ""
+        st.session_state.outreach_recipient = ""
+        st.session_state.outreach_messages = []
+
+    with st.expander("Lead details", expanded=False):
+        st.json(selected_lead)
+
+    history_limit = st.slider(
+        "Number of recent messages to include",
+        min_value=1,
+        max_value=50,
+        value=int(st.session_state.get("outreach_history_limit", 8)),
+    )
+    st.session_state.outreach_history_limit = history_limit
+
+    try:
+        response = api_request(
+            "GET",
+            f"/api/outreach/conversations/{selected_conversation}",
+            params={"limit": history_limit},
+        )
+        if response.ok:
+            st.session_state.outreach_messages = response.json().get("messages", [])
+        else:
+            st.error(f"Failed to load conversation: {response.status_code}")
+            with st.expander("Response details"):
+                st.write(response.text)
+    except Exception as exc:  # pragma: no cover - UI path
+        st.error(f"Error loading conversation: {exc}")
+
+    st.markdown("#### Conversation History")
+    messages = st.session_state.get("outreach_messages", [])
+    if not messages:
+        st.info("No messages found for this conversation yet.")
+    else:
+        for message in messages:
+            role = message.get("role", "assistant").title()
+            timestamp = message.get("timestamp", "")
+            content = message.get("content", "")
+            st.markdown(f"**{role}** ({timestamp})\n\n{content}")
+            st.divider()
+
+    st.markdown("#### Email Composer")
+    composer_col1, composer_col2 = st.columns([1, 3])
+    with composer_col1:
+        if st.button("Generate Email Draft"):
+            payload = {
+                "conversation_id": selected_conversation,
+                "history_limit": history_limit,
+            }
+            try:
+                response = api_request("POST", "/api/outreach/email/draft", json=payload)
+                if response.ok:
+                    data = response.json()
+                    st.session_state.outreach_subject = data.get("subject", "")
+                    st.session_state.outreach_body = data.get("body", "")
+                    suggested = data.get("suggested_recipient")
+                    if suggested:
+                        st.session_state.outreach_recipient = suggested
+                    st.success("Draft generated. Review and edit before sending.")
+                else:
+                    st.error(f"Draft generation failed: {response.status_code}")
+                    with st.expander("Response details"):
+                        st.write(response.text)
+            except Exception as exc:  # pragma: no cover - UI path
+                st.error(f"Error generating draft: {exc}")
+
+    with composer_col2:
+        st.caption("Tip: adjust the subject or body before sending.")
+
+    recipient = st.text_input("Recipient email", key="outreach_recipient")
+    subject = st.text_input("Email subject", key="outreach_subject")
+    body = st.text_area("Email body", key="outreach_body", height=240)
+
+    send_disabled = not recipient.strip() or not subject.strip() or not body.strip()
+    if st.button("Send Email", disabled=send_disabled):
+        payload = {
+            "conversation_id": selected_conversation,
+            "recipient": recipient.strip(),
+            "subject": subject.strip(),
+            "body": body,
+        }
+        try:
+            response = api_request("POST", "/api/outreach/email/send", json=payload)
+            if response.ok:
+                st.success("Email sent successfully.")
+            else:
+                st.error(f"Failed to send email: {response.status_code}")
+                with st.expander("Response details"):
+                    st.write(response.text)
+        except Exception as exc:  # pragma: no cover - UI path
+            st.error(f"Error sending email: {exc}")
+
+
 def lead_search_tab() -> None:
     st.subheader("🔍 Lead Search")
     query = st.text_area(
@@ -470,6 +622,7 @@ def render_tabs() -> None:
             "Document Ingestion",
             "Chat Console",
             "Leads & Appointments",
+            "Lead Outreach",
             "Lead Search",
         ]
     )
@@ -484,6 +637,8 @@ def render_tabs() -> None:
     with tabs[4]:
         leads_and_appointments_tab()
     with tabs[5]:
+        lead_outreach_tab()
+    with tabs[6]:
         lead_search_tab()
 
 

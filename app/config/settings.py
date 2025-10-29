@@ -75,8 +75,8 @@ class Settings(BaseSettings):
     DEV_TOKEN_BRANCH_ID: str = Field("demo_branch")
     DEV_TOKEN_USER_ID: str = Field("demo_user")
     DEV_TOKEN_NAME: str = Field("Demo User")
-    
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 
-    
+
 settings = Settings()

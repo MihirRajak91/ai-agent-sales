@@ -7,6 +7,7 @@ from .google_oauth import router as google_oauth_router
 from .health import router as health_router
 from .ingest import router as ingest_router
 from .leads import router as leads_router
+from .outreach import router as outreach_router
 
 __all__ = [
     "auth_router",
@@ -16,4 +17,5 @@ __all__ = [
     "health_router",
     "ingest_router",
     "leads_router",
+    "outreach_router",
 ]
