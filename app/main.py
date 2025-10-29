@@ -13,6 +13,16 @@ from app.routers import (
 )
 from app.settings import settings
 from app import deps
+from app.utils.constants import (
+    FASTAPI_APP_TITLE,
+    FASTAPI_APP_VERSION,
+    FASTAPI_DOCS_URL,
+    FASTAPI_REDOC_URL,
+    STARTUP_HEALTH_CHECKERS,
+    STARTUP_LOGGER_NAME,
+    STARTUP_LOG_MESSAGE,
+    STARTUP_RUNTIME_LOG_MESSAGE,
+)
 
 
 def create_app() -> FastAPI:
@@ -20,10 +30,10 @@ def create_app() -> FastAPI:
     setup_logging(settings.LOG_LEVEL)
 
     app = FastAPI(
-        title="Multi-tenant Conversational Sales Agent",
-        version="0.1.0",
-        docs_url="/docs",
-        redoc_url=None,
+        title=FASTAPI_APP_TITLE,
+        version=FASTAPI_APP_VERSION,
+        docs_url=FASTAPI_DOCS_URL,
+        redoc_url=FASTAPI_REDOC_URL,
     )
 
     app.add_middleware(TenantContextMiddleware)
@@ -36,15 +46,15 @@ def create_app() -> FastAPI:
     app.include_router(google_oauth_router)
     app.include_router(health_router)
 
-    logger = get_logger("startup")
+    logger = get_logger(STARTUP_LOGGER_NAME)
 
     @app.on_event("startup")
     async def _log_startup() -> None:
-        logger.info("FastAPI app started", extra={"env": settings.APP_ENV})
+        logger.info(STARTUP_LOG_MESSAGE, extra={"env": settings.APP_ENV})
 
         if settings.PRINT_SETTINGS_ON_STARTUP:
             logger.info(
-                "Runtime configuration",
+                STARTUP_RUNTIME_LOG_MESSAGE,
                 extra={
                     "env": settings.APP_ENV,
                     "log_level": settings.LOG_LEVEL,
@@ -64,9 +74,8 @@ app = create_app()
 
 def _run_startup_checks(logger) -> None:
     checks = {
-        "mongo": deps.health_check_mongo,
-        "pinecone": deps.health_check_pinecone,
-        "gemini": deps.health_check_gemini,
+        name: getattr(deps, checker_name)
+        for name, checker_name in STARTUP_HEALTH_CHECKERS.items()
     }
 
     for name, checker in checks.items():

@@ -19,21 +19,43 @@ from app.services.lead import record_lead
 from app.services.retrieval import query_knowledge_base
 from app.services.scheduling import handle_scheduling, SchedulingResult
 from app.settings import settings
+from app.utils.constants import (
+    CHAT_BOOKING_HEURISTIC_RATIONALE,
+    CHAT_BOOKING_KEYWORDS,
+    CHAT_CONTEXT_SOURCE_FALLBACK,
+    CHAT_INTENT_DETECTED_MESSAGE,
+    CHAT_INTENT_HEURISTIC_CONFIDENCE,
+    CHAT_LEAD_RECORD_FAILURE_MESSAGE,
+    CHAT_LOGGER_NAME,
+    CHAT_MESSAGE_ROLE_ASSISTANT,
+    CHAT_MESSAGE_ROLE_USER,
+    CHAT_MODEL_MAX_OUTPUT_TOKENS,
+    CHAT_MODEL_TEMPERATURE,
+    CHAT_NO_CONTEXT_MESSAGE,
+    CHAT_PROMPT_CONTEXT_HEADER,
+    CHAT_PROMPT_HISTORY_VARIABLE,
+    CHAT_PROMPT_HUMAN_TEMPLATE,
+    CHAT_PROMPT_INPUT_KEY,
+    CHAT_PROMPT_INSTRUCTIONS,
+    CHAT_PROMPT_USER_QUESTION_TEMPLATE,
+    CHAT_PURCHASE_HEURISTIC_RATIONALE,
+    CHAT_PURCHASE_KEYWORDS,
+    CHAT_SCHEDULING_FAILURE_MESSAGE,
+    CHAT_SOURCE_TEMPLATE,
+    CHAT_SYSTEM_PROMPT,
+    DEFAULT_CHAT_HISTORY_LIMIT,
+    DEFAULT_RETRIEVAL_TOP_K,
+)
 
-logger = get_logger("chat")
-
-SYSTEM_PROMPT = """You are a helpful sales assistant for internal teams.
-Answer the user's question using ONLY the provided knowledge base context and prior conversation.
-If the context does not contain the answer, reply with a brief apology and ask for more information.
-Reference source numbers in parentheses (e.g., [source 1]) when quoting from specific chunks."""
+logger = get_logger(CHAT_LOGGER_NAME)
 
 
 def handle_chat(
     tenant: TenantClaims,
     request: ChatRequest,
     *,
-    history_limit: int = 6,
-    top_k: int = 6,
+    history_limit: int = DEFAULT_CHAT_HISTORY_LIMIT,
+    top_k: int = DEFAULT_RETRIEVAL_TOP_K,
 ) -> ChatResponse:
     conversation_id, recent_history = _prepare_conversation(tenant, request, history_limit)
 
@@ -59,7 +81,7 @@ def handle_chat(
                 lead_for_response = scheduling_result.lead
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning(
-                "Scheduling handling failed",
+                CHAT_SCHEDULING_FAILURE_MESSAGE,
                 extra={
                     "conversation_id": conversation_id,
                     "org_id": tenant.org_id,
@@ -81,23 +103,23 @@ def handle_chat(
         llm = ChatGoogleGenerativeAI(
             model=settings.LLM_MODEL,
             api_key=settings.GEMINI_API_KEY,
-            temperature=0.3,
-            max_output_tokens=512,
+            temperature=CHAT_MODEL_TEMPERATURE,
+            max_output_tokens=CHAT_MODEL_MAX_OUTPUT_TOKENS,
         )
 
         prompt = ChatPromptTemplate.from_messages(
             [
-                ("system", SYSTEM_PROMPT),
-                MessagesPlaceholder(variable_name="history"),
-                ("human", "{input}"),
+                ("system", CHAT_SYSTEM_PROMPT),
+                MessagesPlaceholder(variable_name=CHAT_PROMPT_HISTORY_VARIABLE),
+                ("human", CHAT_PROMPT_HUMAN_TEMPLATE),
             ]
         )
 
         chain = prompt | llm
         ai_response: AIMessage = chain.invoke(
             {
-                "history": history_messages,
-                "input": user_message.content,
+                CHAT_PROMPT_HISTORY_VARIABLE: history_messages,
+                CHAT_PROMPT_INPUT_KEY: user_message.content,
             }
         )
         answer_text = ai_response.content if isinstance(ai_response.content, str) else str(ai_response.content)
@@ -146,12 +168,19 @@ def _prepare_conversation(
 
 def _format_context(chunks: List[RetrievedChunk]) -> str:
     if not chunks:
-        return "No relevant knowledge base entries were retrieved for this question."
+        return CHAT_NO_CONTEXT_MESSAGE
 
     lines = []
     for idx, chunk in enumerate(chunks, start=1):
-        source = chunk.source or "knowledge base"
-        lines.append(f"[source {idx}] (page {chunk.page or '?'} from {source})\n{chunk.text}")
+        source = chunk.source or CHAT_CONTEXT_SOURCE_FALLBACK
+        lines.append(
+            CHAT_SOURCE_TEMPLATE.format(
+                index=idx,
+                page=chunk.page or "?",
+                source=source,
+                content=chunk.text,
+            )
+        )
     return "\n\n".join(lines)
 
 
@@ -160,19 +189,18 @@ def _to_langchain_messages(history: List[dict]) -> List[BaseMessage]:
     for item in history:
         role = item.get("role")
         content = item.get("content", "")
-        if role == "assistant":
+        if role == CHAT_MESSAGE_ROLE_ASSISTANT:
             messages.append(AIMessage(content=content))
-        elif role == "user":
+        elif role == CHAT_MESSAGE_ROLE_USER:
             messages.append(HumanMessage(content=content))
     return messages
 
 
 def _build_human_prompt(user_query: str, context_text: str) -> str:
     return (
-        f"User question: {user_query}\n\n"
-        f"Knowledge base context:\n{context_text}\n\n"
-        "Provide a concise answer grounded in the context above.\n"
-        "If you mention a source, cite it as [source number]."
+        f"{CHAT_PROMPT_USER_QUESTION_TEMPLATE.format(question=user_query)}\n\n"
+        f"{CHAT_PROMPT_CONTEXT_HEADER.format(context=context_text)}\n\n"
+        f"{CHAT_PROMPT_INSTRUCTIONS}"
     )
 
 
@@ -185,8 +213,8 @@ def _persist_messages(
 ) -> List[dict]:
     now = datetime.now(timezone.utc)
     messages = [
-        {"role": "user", "content": user_content, "timestamp": now},
-        {"role": "assistant", "content": assistant_content, "timestamp": now},
+        {"role": CHAT_MESSAGE_ROLE_USER, "content": user_content, "timestamp": now},
+        {"role": CHAT_MESSAGE_ROLE_ASSISTANT, "content": assistant_content, "timestamp": now},
     ]
     conversation_service.append_messages(tenant, conversation_id, messages)
     return messages
@@ -215,7 +243,7 @@ def _detect_user_intent(
         recent_user_messages = [
             entry.get("content", "")
             for entry in history
-            if entry.get("role") == "user"
+            if entry.get("role") == CHAT_MESSAGE_ROLE_USER
         ]
         intent = detect_intent(
             user_query=user_query,
@@ -226,7 +254,7 @@ def _detect_user_intent(
             if heuristic:
                 intent = heuristic
         logger.info(
-            "Intent detected",
+            CHAT_INTENT_DETECTED_MESSAGE,
             extra={
                 "intent": intent.label,
                 "confidence": getattr(intent, "confidence", None),
@@ -240,20 +268,17 @@ def _detect_user_intent(
 
 def _heuristic_intent(user_query: str) -> IntentClassification | None:
     lowered = user_query.lower()
-    booking_keywords = ["book", "schedule", "demo", "meeting", "appointment"]
-    purchase_keywords = ["buy", "purchase", "pricing", "quote", "license"]
-
-    if any(word in lowered for word in booking_keywords):
+    if any(word in lowered for word in CHAT_BOOKING_KEYWORDS):
         return IntentClassification(
             label=IntentLabel.BOOK_APPOINTMENT,
-            confidence=0.6,
-            rationale="Keyword heuristic detected booking intent.",
+            confidence=CHAT_INTENT_HEURISTIC_CONFIDENCE,
+            rationale=CHAT_BOOKING_HEURISTIC_RATIONALE,
         )
-    if any(word in lowered for word in purchase_keywords):
+    if any(word in lowered for word in CHAT_PURCHASE_KEYWORDS):
         return IntentClassification(
             label=IntentLabel.PURCHASE,
-            confidence=0.6,
-            rationale="Keyword heuristic detected purchase intent.",
+            confidence=CHAT_INTENT_HEURISTIC_CONFIDENCE,
+            rationale=CHAT_PURCHASE_HEURISTIC_RATIONALE,
         )
     return None
 
@@ -278,7 +303,7 @@ def _maybe_record_lead(
         return lead
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.warning(
-            "Failed to record lead",
+            CHAT_LEAD_RECORD_FAILURE_MESSAGE,
             extra={
                 "conversation_id": conversation_id,
                 "org_id": tenant.org_id,

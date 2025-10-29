@@ -16,10 +16,18 @@ def init_state() -> None:
     defaults = {
         "api_base_url": "http://localhost:8000",
         "api_token": "",
+        "auth_email": "",
+        "auth_password": "",
+        "auth_org_id": "",
+        "auth_branch_id": "",
+        "auth_name": "",
         "conversation_id": "demo-thread",
         "chat_history": [],
         "leads": [],
         "lead_search_result": None,
+        "oauth_authorize_url": "",
+        "oauth_state": "",
+        "oauth_connected": None,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -59,6 +67,15 @@ def api_request(
     return response
 
 
+def auth_post(path: str, payload: Dict[str, Any]) -> requests.Response:
+    base_url = st.session_state.get("api_base_url", "").rstrip("/")
+    if not base_url:
+        raise ValueError("API base URL is not configured.")
+    url = f"{base_url}{path}"
+    response = requests.post(url, json=payload, timeout=30)
+    return response
+
+
 def render_sidebar() -> None:
     st.sidebar.header("Connection")
     st.sidebar.text_input(
@@ -81,6 +98,172 @@ def render_sidebar() -> None:
     st.sidebar.caption(
         "Tip: generate a dev token via `/auth/token/dev` and paste it here."
     )
+
+
+def authentication_tab() -> None:
+    st.subheader("🔐 Authentication")
+    st.write(
+        "Register a new tenant user or sign in to retrieve a JWT. "
+        "Successful responses update the sidebar token automatically."
+    )
+
+    register_col, login_col = st.columns(2)
+
+    with register_col:
+        st.markdown("#### Register")
+        with st.form("register-form"):
+            email = st.text_input(
+                "Email",
+                key="auth_email",
+                placeholder="user@example.com",
+            )
+            password = st.text_input(
+                "Password (min 8 characters)",
+                type="password",
+                key="auth_password",
+            )
+            name = st.text_input(
+                "Display name (optional)",
+                key="auth_name",
+            )
+            org_id = st.text_input(
+                "Organisation ID",
+                key="auth_org_id",
+            )
+            branch_id = st.text_input(
+                "Branch ID",
+                key="auth_branch_id",
+            )
+            submitted = st.form_submit_button("Register & Retrieve Token")
+
+            if submitted:
+                if len(password) < 8:
+                    st.error("Password must be at least 8 characters long.")
+                elif not email or not org_id or not branch_id:
+                    st.error("Email, organisation ID, and branch ID are required.")
+                else:
+                    payload = {
+                        "email": email.strip(),
+                        "password": password,
+                        "name": name.strip() or None,
+                        "org_id": org_id.strip(),
+                        "branch_id": branch_id.strip(),
+                    }
+                    try:
+                        response = auth_post("/auth/register", payload)
+                        if response.ok:
+                            token = response.json().get("access_token")
+                            if token:
+                                st.session_state.api_token = token
+                                st.success("Registration successful. Token stored in sidebar.")
+                                st.code(token, language="text")
+                            else:
+                                st.warning("Registration succeeded but no token was returned.")
+                        else:
+                            st.error(f"Registration failed: {response.status_code}")
+                            with st.expander("Response details"):
+                                st.write(response.text)
+                    except Exception as exc:  # pragma: no cover - UI path
+                        st.error(f"Registration request error: {exc}")
+
+    with login_col:
+        st.markdown("#### Log In")
+        with st.form("login-form"):
+            login_email = st.text_input(
+                "Email",
+                key="login_email_input",
+                placeholder="user@example.com",
+            )
+            login_password = st.text_input(
+                "Password",
+                type="password",
+                key="login_password_input",
+            )
+            submitted = st.form_submit_button("Log In & Retrieve Token")
+
+            if submitted:
+                if not login_email or not login_password:
+                    st.error("Email and password are required.")
+                else:
+                    payload = {
+                        "email": login_email.strip(),
+                        "password": login_password,
+                    }
+                    try:
+                        response = auth_post("/auth/login", payload)
+                        if response.ok:
+                            token = response.json().get("access_token")
+                            if token:
+                                st.session_state.api_token = token
+                                st.success("Login successful. Token stored in sidebar.")
+                                st.code(token, language="text")
+                            else:
+                                st.warning("Login succeeded but no token was returned.")
+                        else:
+                            st.error(f"Login failed: {response.status_code}")
+                            with st.expander("Response details"):
+                                st.write(response.text)
+                    except Exception as exc:  # pragma: no cover - UI path
+                        st.error(f"Login request error: {exc}")
+
+
+def google_oauth_tab() -> None:
+    st.subheader("🔑 Google Calendar OAuth")
+    if not auth_headers():
+        st.info("Provide a bearer token in the sidebar to manage Google OAuth.")
+        return
+
+    st.markdown(
+        "1. Generate the authorisation link.\n"
+        "2. Open it in a new tab, complete the Google consent flow, and wait for the success page.\n"
+        "3. Return here and check the connection status."
+    )
+
+    if st.button("Generate Authorisation URL"):
+        try:
+            response = api_request("GET", "/oauth/google/init")
+            if response.ok:
+                data = response.json()
+                auth_url = data.get("authorization_url")
+                st.session_state.oauth_authorize_url = auth_url or ""
+                st.session_state.oauth_state = data.get("state", "")
+                if auth_url:
+                    st.success("Authorisation URL generated. Open the link below in a new tab.")
+                    st.markdown(f"[Connect Google Calendar]({auth_url})")
+                else:
+                    st.warning("Request succeeded but no URL was returned.")
+            else:
+                st.error(f"Failed to generate authorisation URL: {response.status_code}")
+                with st.expander("Response details"):
+                    st.write(response.text)
+        except Exception as exc:  # pragma: no cover - UI path
+            st.error(f"Error while requesting authorisation URL: {exc}")
+
+    if st.button("Check Connection Status"):
+        try:
+            response = api_request("GET", "/oauth/google/status")
+            if response.ok:
+                data = response.json()
+                connected = data.get("connected")
+                st.session_state.oauth_connected = connected
+                if connected:
+                    st.success("Google Calendar is connected for this tenant.")
+                else:
+                    st.warning("Google Calendar is not connected yet.")
+            else:
+                st.error(f"Failed to check status: {response.status_code}")
+                with st.expander("Response details"):
+                    st.write(response.text)
+        except Exception as exc:  # pragma: no cover - UI path
+            st.error(f"Error checking OAuth status: {exc}")
+
+    if st.session_state.get("oauth_authorize_url"):
+        st.caption("Last generated URL:")
+        st.code(st.session_state.oauth_authorize_url, language="text")
+
+    if st.session_state.get("oauth_connected") is not None:
+        status = "connected ✅" if st.session_state.oauth_connected else "not connected ❌"
+        st.info(f"Latest status: Google Calendar is {status}.")
 
 
 def document_ingestion_tab() -> None:
@@ -282,6 +465,8 @@ def lead_search_tab() -> None:
 def render_tabs() -> None:
     tabs = st.tabs(
         [
+            "Authentication",
+            "Google OAuth",
             "Document Ingestion",
             "Chat Console",
             "Leads & Appointments",
@@ -289,12 +474,16 @@ def render_tabs() -> None:
         ]
     )
     with tabs[0]:
-        document_ingestion_tab()
+        authentication_tab()
     with tabs[1]:
-        chat_console_tab()
+        google_oauth_tab()
     with tabs[2]:
-        leads_and_appointments_tab()
+        document_ingestion_tab()
     with tabs[3]:
+        chat_console_tab()
+    with tabs[4]:
+        leads_and_appointments_tab()
+    with tabs[5]:
         lead_search_tab()
 
 

@@ -7,12 +7,17 @@ from app.models.auth import TenantClaims
 from app.models.retrieval import RetrievedChunk, RetrievalResult
 from app.services.tenancy import build_tenant_namespace
 from app.settings import settings
+from app.utils.constants import (
+    DEFAULT_RETRIEVAL_TOP_K,
+    GEMINI_EMPTY_EMBEDDINGS_ERROR,
+    RETRIEVAL_TASK_TYPE,
+)
 
 
 def query_knowledge_base(
     tenant: TenantClaims,
     query_text: str,
-    top_k: int = 6,
+    top_k: int = DEFAULT_RETRIEVAL_TOP_K,
 ) -> RetrievalResult:
     """
     Query Pinecone for tenant-specific knowledge using a Gemini-generated embedding.
@@ -25,11 +30,11 @@ def query_knowledge_base(
     response = gemini_client.models.embed_content(
         model=settings.EMBED_MODEL,
         contents=query_text,
-        config={"task_type": "RETRIEVAL_QUERY"},
+        config={"task_type": RETRIEVAL_TASK_TYPE},
     )
 
     if not response.embeddings:
-        raise RuntimeError("Gemini returned empty embeddings response")
+        raise RuntimeError(GEMINI_EMPTY_EMBEDDINGS_ERROR)
 
     query_vector = list(response.embeddings[0].values)
 
