@@ -23,6 +23,9 @@ Key components now include:
 - **Natural-Language Lead Search (New)**  
   `GET /api/leads/search` translates plain English or JSON filters into safe MongoDB queries. Gemini produces both the filter and a narrative summary of the top results, with deterministic fallbacks if the LLM is unavailable.
 
+- **Lead Outreach Emails (New)**  
+  Operators can generate AI-assisted follow-up drafts for open leads, edit them directly in Streamlit, and send via the configured SMTP provider—no CLI required.
+
 - **Operator Streamlit Console**  
   Upload PDFs for ingestion, monitor conversations, review leads/appointments, manage outreach emails (draft/edit/send), and run NL lead searches. When Gemini summaries are enabled, the Lead Search tab shows the LLM narrative plus the executed filter and raw hits.
 
