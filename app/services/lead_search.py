@@ -55,7 +55,7 @@ Rules:
 - Only use the listed fields; reject unknown attributes.
 - Always include equality filters for org_id and branch_id provided in the user context.
 - Avoid free-text exposure of redactable fields unless explicitly requested.
-- Do NOT include explanations, markdown, or surrounding text—only raw JSON.
+- Do NOT include explanations, markdown, or surrounding text; only raw JSON.
 """
 
 LEAD_SUMMARY_SYSTEM_PROMPT = """You craft concise CRM briefings for sales operators.

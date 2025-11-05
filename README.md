@@ -7,7 +7,7 @@ Key components now include:
 - Tenant-aware RAG chat powered by Gemini + Pinecone.
 - Intent detection and lead persistence with booking/purchase tracking.
 - Calendar automation for booking, rescheduling, and cancelling meetings.
-- A Streamlit “Operator Console” for document ingestion, live chats, lead management, and natural-language lead search.
+- A Streamlit "Operator Console" for document ingestion, live chats, lead management, and natural-language lead search.
 - Observability via structured logs and pytest coverage for critical flows.
 
 ## Feature Highlights
@@ -89,7 +89,7 @@ Key components now include:
    - `results` (sanitised documents)
    - `summary` (Gemini narrative or deterministic fallback)
    - `elapsed_ms`, `count`, etc.
-4. Streamlit’s Lead Search tab mirrors this flow and surfaces both the executed filter and narrative.
+4. Streamlit's Lead Search tab mirrors this flow and surfaces both the executed filter and narrative.
 
 ## API Reference Snapshot
 | Endpoint | Description |

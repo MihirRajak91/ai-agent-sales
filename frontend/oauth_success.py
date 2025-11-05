@@ -2,7 +2,7 @@ import streamlit as st
 
 st.set_page_config(
     page_title="OAuth Success",
-    page_icon="✅",
+    page_icon=":white_check_mark:",
 )
 
 st.title("Google OAuth Complete")

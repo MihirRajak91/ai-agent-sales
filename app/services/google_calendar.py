@@ -116,6 +116,14 @@ def exchange_code(state: str, code: str) -> TenantClaims:
     )
 
     _state_collection().delete_one({"state": state})
+    logger.info(
+        "Google OAuth tokens saved",
+        extra={
+            "org_id": tenant.org_id,
+            "branch_id": tenant.branch_id,
+            "user_id": tenant.user_id,
+        },
+    )
     return tenant
 
 
@@ -332,7 +340,3 @@ def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
         return None
     normalized = value.replace("Z", "+00:00")
     return datetime.fromisoformat(normalized)
-    logger.info(
-        "Google OAuth tokens saved",
-        extra={"org_id": tenant.org_id, "branch_id": tenant.branch_id},
-    )

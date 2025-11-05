@@ -7,7 +7,7 @@ import streamlit as st
 
 st.set_page_config(
     page_title="Sales Assistant Operator Console",
-    page_icon="💼",
+    page_icon=":briefcase:",
     layout="wide",
 )
 
@@ -101,7 +101,7 @@ def render_sidebar() -> None:
 
 
 def authentication_tab() -> None:
-    st.subheader("🔐 Authentication")
+    st.subheader(":lock: Authentication")
     st.write(
         "Register a new tenant user or sign in to retrieve a JWT. "
         "Successful responses update the sidebar token automatically."
@@ -208,7 +208,7 @@ def authentication_tab() -> None:
 
 
 def google_oauth_tab() -> None:
-    st.subheader("🔑 Google Calendar OAuth")
+    st.subheader(":key: Google Calendar OAuth")
     if not auth_headers():
         st.info("Provide a bearer token in the sidebar to manage Google OAuth.")
         return
@@ -262,12 +262,12 @@ def google_oauth_tab() -> None:
         st.code(st.session_state.oauth_authorize_url, language="text")
 
     if st.session_state.get("oauth_connected") is not None:
-        status = "connected ✅" if st.session_state.oauth_connected else "not connected ❌"
+        status = "connected :white_check_mark:" if st.session_state.oauth_connected else "not connected :x:"
         st.info(f"Latest status: Google Calendar is {status}.")
 
 
 def document_ingestion_tab() -> None:
-    st.subheader("📄 Document Ingestion")
+    st.subheader(":page_facing_up: Document Ingestion")
     uploaded_file = st.file_uploader(
         "Upload PDF for knowledge base ingestion", type=["pdf"]
     )
@@ -297,7 +297,7 @@ def document_ingestion_tab() -> None:
 
 
 def chat_console_tab() -> None:
-    st.subheader("💬 Chat Console")
+    st.subheader(":speech_balloon: Chat Console")
     conversation_id = st.session_state.get("conversation_id")
     if not conversation_id:
         st.warning("Set a conversation ID in the sidebar to enable chat.")
@@ -361,7 +361,7 @@ def chat_console_tab() -> None:
 
 
 def leads_and_appointments_tab() -> None:
-    st.subheader("📇 Leads & Appointments")
+    st.subheader(":card_index_dividers: Leads & Appointments")
     if st.button("Refresh Leads"):
         try:
             response = api_request("GET", "/api/leads")
@@ -410,7 +410,7 @@ def leads_and_appointments_tab() -> None:
 
 
 def lead_search_tab() -> None:
-    st.subheader("🔍 Lead Search")
+    st.subheader(":mag: Lead Search")
     query = st.text_area(
         "Search Query",
         value=st.session_state.get("lead_search_query", ""),

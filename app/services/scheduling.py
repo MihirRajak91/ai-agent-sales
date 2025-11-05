@@ -215,10 +215,21 @@ def _extract_datetimes(message: str) -> tuple[Optional[datetime], Optional[datet
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=default_tz)
 
+    adjusted_forward = False
     if parsed <= datetime.now(parsed.tzinfo):
         parsed = parsed + timedelta(days=7)
+        adjusted_forward = True
 
     end = parsed + DEFAULT_APPOINTMENT_DURATION
+    logger.info(
+        "Scheduling datetime parsed",
+        extra={
+            "start": parsed.isoformat(),
+            "end": end.isoformat(),
+            "timezone": settings.DEFAULT_TIMEZONE,
+            "adjusted_forward_week": adjusted_forward,
+        },
+    )
     return parsed, end
 
 
