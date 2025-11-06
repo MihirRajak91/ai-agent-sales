@@ -76,7 +76,30 @@ def handle_scheduling(
                     message=f"Thanks! I've sent the confirmation to **{recipient}**.",
                     lead=lead,
                 )
-        return SchedulingResult()
+        if any(
+            keyword in lowered
+            for keyword in ["reschedule", "change", "different time", "another time", "new time"]
+        ):
+            return SchedulingResult(
+                message=(
+                    "You already have a meeting booked. "
+                    "Tell me the new date and time you'd prefer and I'll reschedule it."
+                ),
+                lead=lead,
+            )
+        if lead.appointment_start:
+            scheduled_text = _format_datetime(lead.appointment_start)
+            return SchedulingResult(
+                message=(
+                    f"You're already scheduled for **{scheduled_text}**. "
+                    "Let me know if you want to move it to a different time."
+                ),
+                lead=lead,
+            )
+        return SchedulingResult(
+            message="You're already scheduled. Share a new date and time if you'd like me to reschedule it.",
+            lead=lead,
+        )
 
     if lead.intent != IntentLabel.BOOK_APPOINTMENT.value:
         return SchedulingResult()
@@ -110,7 +133,24 @@ def _handle_booking(
         lead_id=lead.id,
     )
 
-    event = create_appointment(tenant, request)
+    try:
+        event = create_appointment(tenant, request)
+    except ValueError as exc:
+        logger.warning(
+            "Calendar booking unavailable",
+            extra={
+                "lead_id": lead.id,
+                "org_id": tenant.org_id,
+                "branch_id": tenant.branch_id,
+            },
+            exc_info=exc,
+        )
+        friendly_time = _format_datetime(start) if start else "the requested time"
+        fallback_message = (
+            f"I have the details for **{friendly_time}**, but I still need calendar access to finalize the invite. "
+            "Please connect Google Calendar in the Operator Console or let me know an email address so I can send a confirmation manually."
+        )
+        return SchedulingResult(message=fallback_message, lead=lead)
     logger.info(
         "Appointment booked",
         extra={
