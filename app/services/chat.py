@@ -61,6 +61,28 @@ from app.utils.constants import (
 logger = get_logger(CHAT_LOGGER_NAME)
 
 _EMAIL_REGEX = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_BOOKING_KEYWORDS = (
+    "book",
+    "schedule",
+    "appointment",
+    "meeting",
+    "calendar",
+    "time slot",
+    "timeslot",
+)
+_RESCHEDULE_KEYWORDS = (
+    "resched",
+    "reschedule",
+    "another time",
+    "different time",
+    "change the time",
+    "change time",
+    "move",
+    "new time",
+    "later time",
+    "earlier time",
+    "cancel",
+)
 
 
 def _build_llm() -> ChatGoogleGenerativeAI:
@@ -97,22 +119,38 @@ def handle_chat(
     is_purchase_intent = intent is not None and intent.label == IntentLabel.PURCHASE
     purchase_confirmed = is_purchase_intent and _is_purchase_confirmation(request.query)
     if lead:
-        try:
-            scheduling_result = handle_scheduling(tenant, lead, request.query)
-            if scheduling_result.message:
-                answer_text = scheduling_result.message
-            if scheduling_result.lead:
-                lead_for_response = scheduling_result.lead
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning(
-                CHAT_SCHEDULING_FAILURE_MESSAGE,
-                extra={
-                    "conversation_id": conversation_id,
-                    "org_id": tenant.org_id,
-                    "branch_id": tenant.branch_id,
-                },
-                exc_info=exc,
-            )
+        lowered_query = request.query.lower()
+        email_in_message = bool(_EMAIL_REGEX.search(request.query))
+        wants_reschedule = any(phrase in lowered_query for phrase in _RESCHEDULE_KEYWORDS)
+        wants_booking = any(phrase in lowered_query for phrase in _BOOKING_KEYWORDS)
+
+        should_try_scheduling = False
+        if intent and intent.label == IntentLabel.BOOK_APPOINTMENT:
+            should_try_scheduling = True
+        elif lead.appointment_event_id:
+            if email_in_message or wants_reschedule:
+                should_try_scheduling = True
+        else:
+            if email_in_message or wants_booking:
+                should_try_scheduling = True
+
+        if should_try_scheduling:
+            try:
+                scheduling_result = handle_scheduling(tenant, lead, request.query)
+                if scheduling_result.message:
+                    answer_text = scheduling_result.message
+                if scheduling_result.lead:
+                    lead_for_response = scheduling_result.lead
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning(
+                    CHAT_SCHEDULING_FAILURE_MESSAGE,
+                    extra={
+                        "conversation_id": conversation_id,
+                        "org_id": tenant.org_id,
+                        "branch_id": tenant.branch_id,
+                    },
+                    exc_info=exc,
+                )
 
     if answer_text is None:
         retrieval = query_knowledge_base(tenant, request.query, top_k=top_k)

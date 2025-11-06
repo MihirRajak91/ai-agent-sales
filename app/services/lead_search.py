@@ -54,6 +54,7 @@ Rules:
 - Never refer to collections other than "leads".
 - Only use the listed fields; reject unknown attributes.
 - Always include equality filters for org_id and branch_id provided in the user context.
+- Do not add status-based filters unless the user explicitly requests a specific status.
 - Avoid free-text exposure of redactable fields unless explicitly requested.
 - Do NOT include explanations, markdown, or surrounding text; only raw JSON.
 """

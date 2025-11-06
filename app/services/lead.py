@@ -77,12 +77,21 @@ def record_lead(
 
 
 def list_leads(tenant: TenantClaims) -> List[Lead]:
-    cursor = _collection().find(
-        {
-            "org_id": tenant.org_id,
-            "branch_id": tenant.branch_id,
-        }
-    ).sort("updated_at", -1)
+    cursor = (
+        _collection()
+        .find(
+            {
+                "org_id": tenant.org_id,
+                "branch_id": tenant.branch_id,
+            }
+        )
+        .sort(
+            [
+                ("updated_at", -1),
+                ("created_at", -1),
+            ]
+        )
+    )
     return [_mongo_to_lead(doc) for doc in cursor]
 
 
