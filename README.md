@@ -6,8 +6,8 @@ This project provides a full-stack, multi-tenant sales assistant that can ingest
 Key components now include:
 - Tenant-aware RAG chat powered by Gemini + Pinecone.
 - Intent detection and lead persistence with booking/purchase tracking.
-- Calendar automation for booking, rescheduling, and cancelling meetings.
-- A Streamlit "Operator Console" for document ingestion, live chats, lead management, and natural-language lead search.
+- Calendar automation for booking, rescheduling, cancelling meetings, and emailing confirmations.
+- A Streamlit “Operator Console” for document ingestion, live chats, lead management, outreach email drafting, and natural-language lead search.
 - Observability via structured logs and pytest coverage for critical flows.
 
 ## Feature Highlights
@@ -18,13 +18,16 @@ Key components now include:
   LangGraph + Gemini classify each message (`book_appointment`, `purchase`, `none`). Leads are stored in MongoDB with confidence, rationale, appointment metadata, and timestamps.
 
 - **Calendar Automation**  
-  Chat flows create, update, and delete Google Calendar events (OAuth-based). Appointments sync back to leads to keep status in lockstep.
+  Chat flows create, update, and delete Google Calendar events (OAuth-based). Appointments sync back to leads to keep status in lockstep, and confirmation emails are sent automatically when meetings are booked or rescheduled.
 
 - **Natural-Language Lead Search (New)**  
   `GET /api/leads/search` translates plain English or JSON filters into safe MongoDB queries. Gemini produces both the filter and a narrative summary of the top results, with deterministic fallbacks if the LLM is unavailable.
 
+- **Lead Outreach Emails (New)**  
+  Operators can generate AI-assisted follow-up drafts for open leads, edit them directly in Streamlit, and send via the configured SMTP provider—no CLI required.
+
 - **Operator Streamlit Console**  
-  Upload PDFs for ingestion, monitor conversations, review leads/appointments, and run NL lead searches. When Gemini summaries are enabled, the Lead Search tab shows the LLM narrative plus the executed filter and raw hits.
+  Upload PDFs for ingestion, monitor conversations, review leads/appointments, manage outreach emails (draft/edit/send), and run NL lead searches. When Gemini summaries are enabled, the Lead Search tab shows the LLM narrative plus the executed filter and raw hits.
 
 - **Reliability & Observability**  
   Structured logging (including Gemini health checks, query metadata, and summary sources), pytest coverage with mocked Pinecone/Gemini/Google services, and guardrails on tenant filters, allowed fields, and result limits.
@@ -43,7 +46,7 @@ Key components now include:
 - Pinecone index (`dimension=768`, `metric=cosine`)
 - Gemini API key with access to chat + embedding models
 - Google OAuth 2.0 Web Client with redirect `http://localhost:8000/oauth/google/callback`
-- (Optional) SMTP or SendGrid credentials if you plan to send follow-up emails
+- SMTP credentials (SendGrid, SES, or SMTP) for appointment confirmations and outreach emails
 
 ## Installation & Setup
 1. **Clone and install dependencies**
@@ -81,6 +84,13 @@ Key components now include:
 3. Leads are stored/updated for every booking or purchase intent; chat responses cite relevant knowledge and prompt for missing details.
 4. Calendar events are created/updated/deleted as the conversation progresses.
 
+### Lead Outreach & Email Workflows (New)
+1. Open the **Lead Outreach** tab in Streamlit.
+2. Refresh open leads, select a conversation, and review the transcript.
+3. Generate an editable sales email draft grounded in RAG snippets.
+4. Adjust the subject/body, then send directly via the configured SMTP provider.
+5. Appointment bookings and reschedules also trigger automated confirmation emails with calendar links.
+
 ### Natural-Language Lead Search
 1. Call `GET /api/leads/search?q=Show open leads without a calendar event&summarize=true`.
 2. Gemini (via LangChain) generates a MongoDB filter/limit JSON. Guardrails enforce tenant filters, allowed fields/operators, and result caps.
@@ -100,9 +110,10 @@ Key components now include:
 | `POST /api/chat` | Tenant-aware chat, lead capture, and scheduling. |
 | `GET /api/leads` | Retrieve all leads for the tenant branch. |
 | `GET /api/leads/search` | Natural-language or JSON-lead search with optional Gemini summary. |
-| `POST /api/appointments` | Create a Google Calendar event. |
-| `PATCH /api/appointments/{event_id}` | Update an existing calendar event. |
-| `DELETE /api/appointments/{event_id}` | Cancel/remove an event. |
+| `POST /api/outreach/email/draft` | Generate an outreach email draft from conversation context. |
+| `POST /api/outreach/email/send` | Deliver the edited outreach email via SMTP. |
+| `GET /api/outreach/open-leads` | List open leads with conversations ready for follow-up. |
+| `GET /api/outreach/conversations/{id}` | Fetch recent messages for a conversation. |
 | `GET /oauth/google/init` | Start OAuth flow for the current tenant. |
 | `GET /oauth/google/status` | Confirm calendar connectivity. |
 

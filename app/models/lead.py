@@ -36,3 +36,4 @@ class Lead(BaseModel):
     appointment_start: Optional[datetime] = None
     appointment_end: Optional[datetime] = None
     calendar_id: Optional[str] = None
+    appointment_html_link: Optional[str] = None

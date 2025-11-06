@@ -54,6 +54,65 @@ CHAT_PROMPT_INSTRUCTIONS: Final[str] = (
     "Provide a concise answer grounded in the context above.\n"
     "If you mention a source, cite it as [source number]."
 )
+CHAT_PURCHASE_SALES_TONE_INSTRUCTIONS: Final[str] = (
+    "Adopt a consultative sales tone that highlights the product's value, clearly enumerate pricing or package "
+    "options from the context, and guide the customer toward choosing an option."
+)
+CHAT_PURCHASE_CONFIRMATION_KEYWORDS: Final[tuple[str, ...]] = (
+    "confirm purchase",
+    "confirm my order",
+    "purchase now",
+    "buy now",
+    "proceed with purchase",
+    "ready to buy",
+    "place the order",
+    "let's buy",
+    "i'll take it",
+    "i am ready to buy",
+)
+CHAT_PURCHASE_INVOICE_SYSTEM_PROMPT: Final[str] = (
+    "You are a billing assistant for a sales team. Based on the conversation history and knowledge base context, "
+    "produce a detailed purchase confirmation that includes the selected products, unit pricing, subtotal, taxes "
+    "if mentioned, and the grand total. Summaries must rely solely on the provided context and conversation."
+)
+CHAT_PURCHASE_INVOICE_USER_TEMPLATE: Final[str] = (
+    "Conversation history summary:\n{conversation_summary}\n\n"
+    "Knowledge base context:\n{context}\n\n"
+    "Latest customer message:\n{user_message}\n\n"
+    "{payment_instructions}\n"
+    "Generate an invoice-style response that confirms the order details and next steps."
+)
+CHAT_PURCHASE_PAYMENT_INSTRUCTIONS: Final[str] = (
+    "Include payment options for phone transfer and bank transfer with any account or contact details mentioned "
+    "in the context. If no details are available, explicitly state that a representative will follow up with "
+    "transfer details."
+)
+CHAT_PURCHASE_EMAIL_SENT_TEMPLATE: Final[str] = "I've emailed the invoice to {email} so you have a copy of the details."
+CHAT_PURCHASE_EMAIL_MISSING_ADDRESS: Final[str] = (
+    "I wasn't able to find an email address. Please share the best email so I can send the invoice."
+)
+CHAT_PURCHASE_EMAIL_FAILURE_MESSAGE: Final[str] = (
+    "I couldn't send the invoice email just now. I'll try again shortly or a teammate will follow up."
+)
+CHAT_PURCHASE_EMAIL_SUBJECT: Final[str] = "Your purchase confirmation"
+
+# Outreach / sales pitch
+OUTREACH_EMAIL_SYSTEM_PROMPT: Final[str] = (
+    "You are a sales specialist crafting follow-up emails for warm leads. "
+    "Write in a concise, confident tone (under ~170 words), highlighting product value and actionable next steps. "
+    "Incorporate knowledge base snippets verbatim when referencing pricing or product facts."
+)
+OUTREACH_EMAIL_TEMPLATE: Final[str] = (
+    "Lead intent: {intent}\n"
+    "Latest customer message: {latest_message}\n"
+    "Conversation recap:\n{conversation_summary}\n\n"
+    "Knowledge base snippets:\n{context}\n\n"
+    "Compose a follow-up email addressed to the customer. Start with a friendly greeting, present a tailored pitch, "
+    "include relevant pricing or offer details if available, and close with clear payment options (phone transfer and bank transfer). "
+    "If pricing isn't present, state that a representative will follow up with specifics."
+)
+OUTREACH_EMAIL_DEFAULT_SUBJECT: Final[str] = "Next steps on your interest"
+OUTREACH_EMAIL_DEFAULT_HISTORY_LIMIT: Final[int] = 8
 
 # User service
 PASSWORD_HASH_SCHEMES: Final[tuple[str, ...]] = ("bcrypt",)

@@ -47,11 +47,11 @@ def record_lead(
             "updated_at": now,
         },
         "$setOnInsert": {
-            "status": LeadStatus.OPEN.value,
             "source": "chat",
             "created_at": now,
         },
     }
+    update["$set"]["status"] = LeadStatus.OPEN.value
 
     if intent.rationale:
         update["$set"]["rationale"] = intent.rationale
@@ -86,6 +86,23 @@ def list_leads(tenant: TenantClaims) -> List[Lead]:
     return [_mongo_to_lead(doc) for doc in cursor]
 
 
+def get_lead_by_conversation(
+    tenant: TenantClaims,
+    conversation_id: str,
+) -> Optional[Lead]:
+    doc = _collection().find_one(
+        {
+            "conversation_id": conversation_id,
+            "org_id": tenant.org_id,
+            "branch_id": tenant.branch_id,
+        },
+        sort=[("updated_at", -1)],
+    )
+    if doc is None:
+        return None
+    return _mongo_to_lead(doc)
+
+
 def attach_appointment(
     tenant: TenantClaims,
     *,
@@ -95,6 +112,7 @@ def attach_appointment(
     end: Optional[datetime] = None,
     calendar_id: Optional[str] = "primary",
     status: LeadStatus = LeadStatus.CONTACTED,
+    event_link: Optional[str] = None,
 ) -> Lead:
     collection = _collection()
     now = datetime.now(timezone.utc)
@@ -117,6 +135,7 @@ def attach_appointment(
                 "appointment_end": end,
                 "calendar_id": calendar_id,
                 "status": status.value,
+                "appointment_html_link": event_link,
                 "updated_at": now,
             }
         },
@@ -156,6 +175,7 @@ def clear_appointment(
                 "appointment_end": None,
                 "calendar_id": None,
                 "status": status.value,
+                "appointment_html_link": None,
                 "updated_at": now,
             }
         },
@@ -188,4 +208,5 @@ def _mongo_to_lead(doc) -> Lead:
         appointment_start=doc.get("appointment_start"),
         appointment_end=doc.get("appointment_end"),
         calendar_id=doc.get("calendar_id"),
+        appointment_html_link=doc.get("appointment_html_link"),
     )

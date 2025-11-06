@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.logging_config import get_logger, setup_logging
+from app.config.logging_config import get_logger, setup_logging
 from app.middleware import TenantContextMiddleware
 from app.routers import (
     appointments_router,
@@ -10,8 +10,9 @@ from app.routers import (
     health_router,
     ingest_router,
     leads_router,
+    outreach_router,
 )
-from app.settings import settings
+from app.config.settings import settings
 from app import deps
 from app.utils.constants import (
     FASTAPI_APP_TITLE,
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(appointments_router)
     app.include_router(google_oauth_router)
     app.include_router(health_router)
+    app.include_router(outreach_router)
 
     logger = get_logger(STARTUP_LOGGER_NAME)
 

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 
 from app.models.auth import TenantClaims
-from app.settings import settings
+from app.config.settings import settings
 
 
 def create_access_token(

@@ -12,7 +12,7 @@ from google import genai
 
 from app.models.auth import TenantClaims
 from app.services.auth import decode_access_token
-from app.settings import settings
+from app.config.settings import settings
 
 TESTING = os.getenv("TESTING") == "1"
 

@@ -10,7 +10,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from app.models.intent import IntentClassification, IntentLabel
-from app.settings import settings
+from app.config.settings import settings
 
 
 class IntentState(TypedDict, total=False):

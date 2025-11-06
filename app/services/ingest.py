@@ -12,7 +12,7 @@ import tiktoken
 from app import deps
 from app.models.auth import TenantClaims
 from app.models.ingest import DocumentChunk, IngestionResult
-from app.settings import settings
+from app.config.settings import settings
 from app.services.tenancy import build_tenant_namespace
 
 
@@ -178,4 +178,3 @@ def _record_ingestion(
             "created_at": datetime.now(timezone.utc),
         }
     )
-
